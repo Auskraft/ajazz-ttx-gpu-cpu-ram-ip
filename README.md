@@ -2,7 +2,8 @@
 
 Шесть экранных кнопок для AJAZZ Stream Dock. Поддерживаются три темы и графики за последние 30 секунд.
 
-**[Скачать установщик для Windows](https://github.com/Auskraft/ajazz-ttx-gpu-cpu-ram-ip/releases/latest/download/AJAZZ-TTX-Setup.exe)** · [Релизы](https://github.com/Auskraft/ajazz-ttx-gpu-cpu-ram-ip/releases)
+- **Плагин уже установлен.** Скачай и открой файл, подтверди обновление и полностью перезапусти Stream Dock. [Скачать обновление (.sdPlugin)](https://github.com/Auskraft/ajazz-ttx-gpu-cpu-ram-ip/releases/latest/download/com.auskraft.ajazz.ttx.sdPlugin)
+- **Первая установка.** Запусти установщик и подтверди импорт в Stream Dock. [Скачать установщик Windows (.exe)](https://github.com/Auskraft/ajazz-ttx-gpu-cpu-ram-ip/releases/latest/download/AJAZZ-TTX-Setup.exe)
 
 ![Темы «Пиксельные столбики», «Тонкие линии» и «Цифры крупнее» с демонстрационными показаниями](docs/themes.png)
 
