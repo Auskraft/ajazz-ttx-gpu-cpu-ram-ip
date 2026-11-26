@@ -6,7 +6,7 @@
   "Icon": "images/plugin.png",
   "Author": "Auskraft",
   "Description": "Мониторинг CPU, GPU, ОЗУ и IP для AJAZZ Stream Dock.",
-  "Version": "1.2.0",
+  "Version": "1.2.1",
   "SDKVersion": 3,
   "CodePathWin": "main.js",
   "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
