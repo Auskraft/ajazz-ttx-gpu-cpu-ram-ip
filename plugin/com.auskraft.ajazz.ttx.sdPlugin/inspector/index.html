@@ -44,9 +44,22 @@
         <option value="large">Цифры крупнее</option>
       </select>
     </label>
+    <label class="field">
+      <span>Размер цифр</span>
+      <select id="digit-size">
+        <option value="">Авто по теме</option>
+      </select>
+    </label>
     <label class="check" id="traffic-section" hidden>
       <input type="checkbox" id="traffic" checked>
       <span>Плавный светофор</span>
+    </label>
+    <label class="field" id="gpu-sensor-field" hidden>
+      <span>Датчик GPU</span>
+      <select id="gpu-sensor">
+        <option value="core">Температура ядра</option>
+        <option value="hotspot">Горячая точка (Hot Spot)</option>
+      </select>
     </label>
     <div id="ip-settings" class="ip-settings" hidden>
       <label class="field">
@@ -62,6 +75,10 @@
           <option value="5">5 секунд</option>
           <option value="15" selected>15 секунд</option>
         </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="ip-progress">
+        <span>Полоса обновления</span>
       </label>
       <p id="ip-note">Для внешнего IP кнопка обращается к api.ipify.org.</p>
     </div>

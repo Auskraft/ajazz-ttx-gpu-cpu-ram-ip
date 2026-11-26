@@ -7,7 +7,7 @@ const { renderTile } = require('./render.js');
 const { createTelemetry } = require('./telemetry.cjs');
 const { metricIds, metricForAction, normalize } = require('./settings.js');
 
-const numericMetrics = metricIds.filter((metric) => metric !== 'ip');
+const numericMetrics = [...metricIds.filter((metric) => metric !== 'ip'), 'gpuHotspot'];
 const historyLength = 30;
 const tickInterval = 1000;
 const minIpCache = 4500;
@@ -80,12 +80,14 @@ function startPlugin({ port, uuid, registerEvent }) {
       entry.gettingIp = null;
       entry.ipValue = address;
       entry.ipStatus = address ? 'ready' : 'unavailable';
-      paint(entry, Date.now());
+      paint(entry);
     });
   }
 
-  function paint(entry, now) {
-    const { context, metric, settings } = entry;
+  function paint(entry, now = Date.now()) {
+    const { context, settings, focus } = entry;
+    const metric = entry.metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot'
+      ? 'gpuHotspot' : entry.metric;
     const isAddress = metric === 'ip';
     const value = isAddress ? entry.ipValue : snapshot[metric] ?? null;
     const status = isAddress ? entry.ipStatus : value === null ? 'unavailable' : 'ready';
@@ -94,6 +96,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       history: histories[metric] ?? [],
       value,
       settings,
+      focus,
       snapshot,
       ipSecondsRemaining: Math.min(settings.ipSeconds, Math.max(0, (entry.ipNextCheck - now) / 1000)),
       status
@@ -134,6 +137,12 @@ function startPlugin({ port, uuid, registerEvent }) {
       snapshot = {};
       for (const history of Object.values(histories)) history.length = 0;
     }
+    if (telemetry) {
+      const needsHotspot = actions.some(({ metric, settings }) =>
+        metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot');
+      telemetry.setGpuHotspotEnabled(needsHotspot);
+      if (!needsHotspot) histories.gpuHotspot.length = 0;
+    }
     if (!actions.some(({ metric, settings }) => metric === 'ip' && settings.ipMode === 'public')) {
       publicController?.abort();
     }
@@ -166,6 +175,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       if (!metric) return;
       onscreen.set(context, {
         context, device, metric, settings: normalize(payload?.settings),
+        focus: onscreen.get(context)?.focus ?? false,
         ipNextCheck: 0, gettingIp: null, ipValue: null, ipStatus: 'loading',
         lastImage: null
       });
@@ -174,6 +184,11 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (event === 'willDisappear') {
       onscreen.delete(context);
       syncCollectors();
+    } else if (event === 'keyDown') {
+      const entry = onscreen.get(context);
+      if (!entry) return;
+      entry.focus = !entry.focus;
+      paint(entry);
     } else if (event === 'didReceiveSettings') {
       const entry = onscreen.get(context);
       if (!entry) return;

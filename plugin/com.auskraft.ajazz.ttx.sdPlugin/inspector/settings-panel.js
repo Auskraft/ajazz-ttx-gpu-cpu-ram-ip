@@ -2,35 +2,49 @@
 
 const form = document.getElementById('settings');
 const theme = document.getElementById('theme');
+const digitSize = document.getElementById('digit-size');
 const traffic = document.getElementById('traffic');
 const trafficSection = document.getElementById('traffic-section');
+const gpuSensor = document.getElementById('gpu-sensor');
+const gpuSensorField = document.getElementById('gpu-sensor-field');
 const ipSettings = document.getElementById('ip-settings');
 const ipMode = document.getElementById('ip-mode');
 const ipSeconds = document.getElementById('ip-seconds');
+const ipProgress = document.getElementById('ip-progress');
 const ipNote = document.getElementById('ip-note');
 const connection = document.getElementById('connection');
-const { metricForAction, supportsTraffic, normalize } = globalThis.AjazzSettings;
+const { metricForAction, supportsTraffic, normalize, digitSizeRange } = globalThis.AjazzSettings;
 
 let socket;
 let registrationId;
 
+for (let size = digitSizeRange.min; size <= digitSizeRange.max; size += 1) {
+  digitSize.add(new Option(`${size} px`, String(size)));
+}
+
 function populate(incoming) {
   const settings = normalize(incoming);
   theme.value = settings.theme;
+  digitSize.value = settings.digitSize === null ? '' : String(settings.digitSize);
   traffic.checked = settings.traffic;
+  gpuSensor.value = settings.gpuSensor;
   ipMode.value = settings.ipMode;
   ipSeconds.value = String(settings.ipSeconds);
+  ipProgress.checked = settings.ipProgress;
   ipNote.hidden = settings.ipMode !== 'public';
 }
 
-for (const input of [theme, traffic, ipMode, ipSeconds]) {
+for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipSeconds, ipProgress]) {
   input.addEventListener('change', () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     const settings = normalize({
       theme: theme.value,
       traffic: traffic.checked,
+      gpuSensor: gpuSensor.value,
       ipMode: ipMode.value,
-      ipSeconds: ipSeconds.value
+      ipSeconds: ipSeconds.value,
+      ipProgress: ipProgress.checked,
+      digitSize: digitSize.value
     });
     ipNote.hidden = settings.ipMode !== 'public';
     socket.send(JSON.stringify({ event: 'setSettings', context: registrationId, payload: settings }));
@@ -45,6 +59,7 @@ globalThis.connectElgatoStreamDeckSocket = (port, uuid, event, application, acti
   registrationId = uuid;
   trafficSection.hidden = !supportsTraffic(metric);
   trafficSection.lastElementChild.textContent = metric.startsWith('cpu') ? 'Светофор CPU' : 'Светофор GPU';
+  gpuSensorField.hidden = metric !== 'gpuTemperature';
   ipSettings.hidden = metric !== 'ip';
   populate(info.payload?.settings);
 

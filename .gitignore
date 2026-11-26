@@ -3,5 +3,6 @@
 /cpu-sensor/dist/
 /cpu-sensor/vendor/
 /cpu-sensor/upstream*.zip
+/gpu-sensor/dist/
 /*.tgz
 *.log

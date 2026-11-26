@@ -19,15 +19,17 @@ const example = {
   ip: ["203.0.113.42", []]
 };
 
-function tile(metric, theme) {
-  const [value, history] = example[metric];
+function tile(metric, theme, focus = false) {
+  const [exampleValue, history] = example[metric];
+  const value = focus && metric === "cpuLoad" ? 18 : exampleValue;
+  const key = focus ? "focus-" + metric : theme + "-" + metric;
   return renderSvg({
-    metric, value, history, settings: { theme, traffic: true, ipSeconds: 15 },
-    snapshot: { ramTotalGb: 32 }, ipSecondsRemaining: 10
-  }).replaceAll('id="face"', `id="face-${theme}-${metric}"`)
-    .replaceAll("#face)", `#face-${theme}-${metric})`)
-    .replaceAll('id="history"', `id="history-${theme}-${metric}"`)
-    .replaceAll("#history)", `#history-${theme}-${metric})`);
+    metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15 },
+    snapshot: { ramTotalGb: 32 }
+  }).replaceAll('id="face"', `id="face-${key}"`)
+    .replaceAll("#face)", `#face-${key})`)
+    .replaceAll('id="history"', `id="history-${key}"`)
+    .replaceAll("#history)", `#history-${key})`);
 }
 
 const logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -66,4 +68,16 @@ fs.writeFileSync(path.join(target, "themes.html"), html(`
   footer{display:flex;gap:16px;margin-top:27px;align-items:center;font-size:13px;font-weight:650;color:#a9b6c9}
   .cpu{color:#ff777f}.gpu{color:#8aef66}.ram{color:#79baff}.ip{color:#7bcafa}.gradient{margin-left:auto;font-weight:400}
   .gradient:before{content:"";display:inline-block;width:58px;height:5px;margin-right:10px;vertical-align:middle;border-radius:999px;background:linear-gradient(90deg,#65f17c,#ffde57,#ff5363)}
+`));
+
+fs.writeFileSync(path.join(target, "focus.html"), html(`
+  <main>
+    <header><h1>Крупное значение по нажатию</h1><span>Демонстрационные данные</span></header>
+    <div class="device">${["cpuLoad", "gpuTemperature", "ip"].map((metric) => tile(metric, "bars", true)).join("")}</div>
+  </main>`, `
+  *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
+  main{padding:25px 27px;width:610px}header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px}
+  h1{margin:0;font-size:21px;font-weight:650;letter-spacing:-.025em}header span{font-size:12px;color:#a9b6c9}
+  .device{display:grid;grid-template-columns:repeat(3,112px);justify-content:start;gap:8px;width:fit-content;padding:9px;border:1px solid #424b5b;border-radius:13px;background:#252d39;box-shadow:0 7px 14px #03070c66}
+  svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
 `));

@@ -44,6 +44,7 @@ $payloadCpu = Join-Path $payload 'cpu'
 New-Item -Path $archiveRoot,$payloadCpu -ItemType Directory -Force | Out-Null
 Copy-Item -LiteralPath $pluginSource -Destination $pluginStage -Recurse
 Copy-Item -LiteralPath (Join-Path $cpuSource 'cpu-temperature.cjs') -Destination $pluginStage
+& (Join-Path $root 'gpu-sensor/build.ps1') -SensorDist $sensorDist -Destination (Join-Path $pluginStage 'gpu-sensor')
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $pluginStage
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $pluginStage
 Copy-Item -Path (Join-Path $sensorDist '*') -Destination $payloadCpu -Recurse
