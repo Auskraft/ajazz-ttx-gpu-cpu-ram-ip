@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -22,6 +23,7 @@ internal static class GameSensor
         if (args.Length == 0) return 2;
         bool once = args[args.Length - 1] == "--once";
         Console.OutputEncoding = new UTF8Encoding(false);
+        if (args[0] == "output") return RunAudioOutput(args);
         if (!once)
         {
             var commands = new Thread(ReadCommands) { IsBackground = true };
@@ -63,6 +65,42 @@ internal static class GameSensor
     private static void Emit(object sample)
     {
         Console.WriteLine(Json.Serialize(sample));
+    }
+
+    private static int RunAudioOutput(string[] args)
+    {
+        if (args.Length == 2 && args[1] == "--once")
+        {
+            Emit(HandleAudioOutput("list"));
+            return 0;
+        }
+        if (args.Length == 3 && args[1] == "--switch")
+        {
+            Emit(HandleAudioOutput("switch " + args[2]));
+            return 0;
+        }
+        if (args.Length != 1) return 2;
+
+        Console.InputEncoding = new UTF8Encoding(false);
+        string command;
+        while ((command = Console.ReadLine()) != null) Emit(HandleAudioOutput(command));
+        return 0;
+    }
+
+    private static object HandleAudioOutput(string command)
+    {
+        try
+        {
+            using (var outputs = new AudioOutput())
+            {
+                if (command == "list") return outputs.List();
+                const string switchPrefix = "switch ";
+                if (command.StartsWith(switchPrefix, StringComparison.Ordinal))
+                    return new { switched = outputs.Switch(command.Substring(switchPrefix.Length)) };
+            }
+        }
+        catch (COMException) { }
+        return null;
     }
 
     private static void RunMicrophone(bool once)

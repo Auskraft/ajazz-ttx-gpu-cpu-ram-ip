@@ -7,13 +7,15 @@ const { renderTile } = require('./render.js');
 const { createTelemetry } = require('./telemetry.cjs');
 const { createGameTelemetry } = require('./game-telemetry.cjs');
 const { createFpsMonitor } = require('./fps-telemetry.cjs');
-const { findBitwarden, openBitwarden } = require('./bitwarden-launch.cjs');
+const { createAudioOutput } = require('./audio-output.cjs');
+const { openBitwarden } = require('./bitwarden-launch.cjs');
 const { hardwareMetricIds, metricForAction, normalize } = require('./settings.js');
 
 const numericMetrics = [...hardwareMetricIds, 'gpuHotspot'];
 const gameMetrics = new Set(['microphone', 'network', 'disk']);
 const historyLength = 30;
 const tickInterval = 1000;
+const audioPollInterval = 2000;
 
 function isPublicIp({ metric, settings }) {
   return metric === 'ip' && settings.ipMode === 'public';
@@ -43,10 +45,15 @@ function startPlugin({ port, uuid, registerEvent }) {
   let fpsMonitor = null;
   let snapshot = {};
   let fpsSnapshot = {};
+  let audioOutput = null;
+  let audioSnapshot = null;
+  let audioRead = null;
+  let audioNextCheck = 0;
+  let audioSwitching = false;
   let timer = null;
 
-  function send(event, context, payload) {
-    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event, context, payload }));
+  function send(event, context, payload, action) {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event, context, payload, action }));
   }
 
   async function resolveAddress(entry, request, withCountry) {
@@ -99,11 +106,12 @@ function startPlugin({ port, uuid, registerEvent }) {
       value = fpsSnapshot[settings.fpsProcess] ?? null;
       history = fpsHistories.get(settings.fpsProcess) ?? [];
       status = value?.status;
+    } else if (metric === 'audioOutput') {
+      value = audioOutputValue(settings, audioSnapshot);
+      status = audioSnapshot?.devices.length ? 'ready' : 'unavailable';
     } else if (gameMetrics.has(metric)) {
       value = game?.value(metric, settings) ?? null;
       history = value?.history ?? [];
-    } else if (metric === 'bitwarden') {
-      status = findBitwarden() ? 'ready' : 'unavailable';
     }
     const image = renderTile({
       metric,
@@ -126,6 +134,70 @@ function startPlugin({ port, uuid, registerEvent }) {
     for (const entry of onscreen.values()) {
       if (entry.metric === 'microphone') paint(entry);
     }
+  }
+
+  function audioOutputValue({ audioOutputA: first, audioOutputB: second }, reading) {
+    const devices = reading?.devices ?? [];
+    const active = devices.find(({ id }) => id === reading.activeId);
+    const selected = [first, second];
+    const configured = Boolean(first && second && first !== second);
+    const pairAvailable = configured && selected.every((endpoint) => devices.some(({ id }) => id === endpoint));
+    const activeIndex = configured && active ? selected.indexOf(active.id) : -1;
+    const slot = activeIndex >= 0 ? activeIndex + 1 : null;
+    return { name: active?.name ?? '', slot, configured, pairAvailable };
+  }
+
+  function readAudioOutputs() {
+    if (audioRead) return audioRead;
+    const output = audioOutput;
+    if (!output) return Promise.resolve(null);
+    audioNextCheck = Date.now() + audioPollInterval;
+    audioRead = output.list().catch(() => null).then((reading) => {
+      if (audioOutput !== output) return null;
+      audioSnapshot = reading;
+      audioRead = null;
+      for (const entry of onscreen.values()) {
+        if (entry.metric === 'audioOutput') paint(entry);
+      }
+      return reading;
+    });
+    return audioRead;
+  }
+
+  async function sendAudioOutputs(entry, action, requestId) {
+    const reading = await readAudioOutputs();
+    if (onscreen.get(entry.context) !== entry) return;
+    send('sendToPropertyInspector', entry.context, {
+      requestId, available: Boolean(reading), devices: reading?.devices ?? []
+    }, action);
+  }
+
+  async function switchAudioOutput(entry) {
+    if (audioSwitching) return;
+    const output = audioOutput;
+    const { audioOutputA: first, audioOutputB: second } = entry.settings;
+    if (!output || !first || !second || first === second) {
+      send('showAlert', entry.context);
+      return;
+    }
+
+    audioSwitching = true;
+    try {
+      const reading = await readAudioOutputs();
+      if (onscreen.get(entry.context) !== entry || audioOutput !== output ||
+          entry.settings.audioOutputA !== first || entry.settings.audioOutputB !== second) return;
+      if (audioOutputValue(entry.settings, reading).pairAvailable) {
+        const target = reading.activeId === first ? second : first;
+        const switched = await output.setDefault(target);
+        const confirmed = await readAudioOutputs();
+        if (switched && confirmed?.activeId === target) return;
+      }
+    } catch {
+      if (audioOutput === output) void readAudioOutputs();
+    } finally {
+      audioSwitching = false;
+    }
+    if (onscreen.get(entry.context) === entry) send('showAlert', entry.context);
   }
 
   function updateFps(sample) {
@@ -159,6 +231,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       }
     }
     if (fpsMonitor) updateFps(sample);
+    if (audioOutput && !audioSwitching && now >= audioNextCheck) void readAudioOutputs();
     for (const entry of onscreen.values()) {
       if (entry.metric === 'ip') refreshAddress(entry, now);
       paint(entry, now);
@@ -167,6 +240,16 @@ function startPlugin({ port, uuid, registerEvent }) {
 
   function syncCollectors() {
     const actions = [...onscreen.values()];
+    const needsAudioOutput = actions.some(({ metric }) => metric === 'audioOutput');
+    if (needsAudioOutput && !audioOutput) {
+      audioOutput = createAudioOutput();
+    } else if (!needsAudioOutput && audioOutput) {
+      audioOutput.close();
+      audioOutput = null;
+      audioSnapshot = null;
+      audioRead = null;
+      audioNextCheck = 0;
+    }
     const needsSensors = actions.some(({ metric }) => hardwareMetricIds.includes(metric));
     if (needsSensors && !telemetry) telemetry = createTelemetry();
     else if (!needsSensors && telemetry) {
@@ -215,6 +298,10 @@ function startPlugin({ port, uuid, registerEvent }) {
   }
 
   function press(entry) {
+    if (entry.metric === 'audioOutput') {
+      void switchAudioOutput(entry);
+      return;
+    }
     if (entry.metric === 'bitwarden') {
       void openBitwarden().then((started) => {
         if (onscreen.get(entry.context) !== entry) return;
@@ -262,6 +349,12 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (event === 'willDisappear') {
       onscreen.delete(context);
       syncCollectors();
+    } else if (event === 'sendToPlugin' && metricForAction(action) === 'audioOutput' &&
+        payload?.request === 'audioOutputs' && typeof payload.requestId === 'string' &&
+        /^\d{1,16}-\d{1,8}$/.test(payload.requestId)) {
+      // Stream Dock can pass the inspector UUID as the message context.
+      const entry = onscreen.get(context) ?? onscreen.get(payload.actionContext);
+      if (entry?.metric === 'audioOutput') void sendAudioOutputs(entry, action, payload.requestId);
     } else if (event === 'keyDown') {
       const entry = onscreen.get(context);
       if (entry) press(entry);

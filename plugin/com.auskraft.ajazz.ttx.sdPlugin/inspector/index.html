@@ -15,8 +15,9 @@
     body { margin: 0; padding: 12px; }
     fieldset { display: grid; gap: 12px; border: 0; margin: 0; padding: 0; min-width: 0; }
     .field { display: grid; gap: 5px; }
-    .ip-settings { display: grid; gap: 10px; }
-    select, input { font: inherit; }
+    .ip-settings, .audio-settings { display: grid; gap: 10px; min-width: 0; }
+    .audio-settings .field { min-width: 0; }
+    select, input, button { font: inherit; }
     select, input[type="text"] {
       width: 100%;
       min-height: 32px;
@@ -27,10 +28,20 @@
       border-radius: 4px;
     }
     input { accent-color: #8accff; }
+    button {
+      justify-self: start;
+      color: #f4f5f7;
+      background: #34373e;
+      border: 1px solid #666a75;
+      padding: 4px 9px;
+      border-radius: 4px;
+    }
+    button:disabled { opacity: .6; }
     :focus-visible { outline: 2px solid #8accff; outline-offset: 2px; }
     .check { display: flex; align-items: center; gap: 7px; min-height: 24px; }
     .check input { flex: none; margin: 0; }
     p { color: #c3c9d3; margin: 0; }
+    .audio-settings p { overflow-wrap: anywhere; }
     [hidden] { display: none; }
   </style>
 </head>
@@ -91,7 +102,8 @@
     </div>
     <label class="field" id="fps-process-field" hidden>
       <span>Процесс игры</span>
-      <input type="text" id="fps-process" maxlength="80" spellcheck="false" autocomplete="off" placeholder="korabli.exe">
+      <input type="text" id="fps-process" maxlength="80" spellcheck="false" autocomplete="off" placeholder="korabli.exe" aria-describedby="fps-process-hint">
+      <small id="fps-process-hint">Для игр Steam и других лаунчеров возьми имя .exe самой игры из вкладки «Подробности» диспетчера задач.</small>
     </label>
     <label class="field" id="ping-target-field" hidden>
       <span>Адрес для пинга</span>
@@ -101,6 +113,18 @@
       <span>Буква тома в Windows</span>
       <select id="volume-letter"></select>
     </label>
+    <div id="audio-settings" class="audio-settings" hidden>
+      <label class="field">
+        <span>Первый аудиовыход</span>
+        <select id="audio-output-a" aria-describedby="audio-status" disabled></select>
+      </label>
+      <label class="field">
+        <span>Второй аудиовыход</span>
+        <select id="audio-output-b" aria-describedby="audio-status" disabled></select>
+      </label>
+      <p role="status" id="audio-status"></p>
+      <button id="refresh-audio-outputs" type="button">Обновить список</button>
+    </div>
   </fieldset>
   <p role="status" id="connection" hidden>Нет связи со Stream Dock. Открой настройки кнопки заново.</p>
   <script src="../settings.js"></script>

@@ -6,7 +6,7 @@
   "Icon": "images/plugin.png",
   "Author": "Auskraft",
   "Description": "Мониторинг ПК, игровые кнопки и запуск Bitwarden для AJAZZ Stream Dock.",
-  "Version": "1.3.0",
+  "Version": "1.4.0",
   "SDKVersion": 3,
   "CodePathWin": "main.js",
   "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
@@ -124,6 +124,17 @@
       "PropertyInspectorPath": "inspector/index.html"
     },
     {
+      "UUID": "com.auskraft.ajazz.ttx.audioOutput",
+      "Name": "Аудиовыход",
+      "Icon": "images/audioOutput.png",
+      "Tooltip": "Нажатие переключает звук Windows между двумя выбранными выходами.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/audioOutput.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
       "UUID": "com.auskraft.ajazz.ttx.bitwarden",
       "Name": "Открыть Bitwarden",
       "Icon": "images/bitwarden.png",
@@ -131,8 +142,7 @@
       "Controllers": ["Keypad"],
       "States": [{ "Image": "images/bitwarden.png", "ShowTitle": false }],
       "UserTitleEnabled": false,
-      "SupportedInMultiActions": false,
-      "PropertyInspectorPath": "inspector/index.html"
+      "SupportedInMultiActions": false
     }
   ]
 }

@@ -25,7 +25,7 @@ internal sealed class Microphone : IDisposable
         try
         {
             if (enumerator == null) enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            Check(enumerator.GetDefaultAudioEndpoint(1, 0, out candidate));
+            Check(enumerator.GetDefaultAudioEndpoint(AudioFlow.Capture, AudioRole.Console, out candidate));
             string id;
             Check(candidate.GetId(out id));
             if (StringComparer.Ordinal.Equals(id, endpointId) && volume != null) return;
@@ -158,24 +158,6 @@ internal sealed class Microphone : IDisposable
         CloseEndpoint();
         Release(enumerator);
         enumerator = null;
-    }
-
-    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-    private class MMDeviceEnumerator { }
-
-    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceEnumerator
-    {
-        [PreserveSig] int EnumAudioEndpoints(int flow, uint mask, out IntPtr devices);
-        [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice device);
-    }
-
-    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDevice
-    {
-        [PreserveSig] int Activate(ref Guid id, uint context, IntPtr parameters, [MarshalAs(UnmanagedType.IUnknown)] out object instance);
-        [PreserveSig] int OpenPropertyStore(uint access, out IntPtr store);
-        [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
     }
 
     [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

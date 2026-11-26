@@ -10,7 +10,7 @@ const FONT = "Segoe UI,Arial,sans-serif";
 const MONO = "Consolas,monospace";
 const CATEGORIES = {
   cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa",
-  fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879"
+  fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879", audio: "#87e2d5"
 };
 const SIGNAL = { green: "#79ef87", amber: "#ffcd69", red: "#ff6777" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
@@ -355,20 +355,48 @@ function drawDisk(value, settings, focus) {
   return header + number + detail + capacity + track + filled;
 }
 
-function drawBitwarden(theme, status) {
+function drawAudioOutput(value, settings, status) {
+  const { theme } = settings;
   const palette = THEMES[theme];
+  const accent = CATEGORIES.audio;
+  const header = gameHeader("АУДИО", accent, theme, value?.slot ? accent : palette.grid);
+  if (!value?.configured) {
+    const hint = status === "unavailable" ? ["Нет", "выходов"] : ["Выбери", "2 выхода"];
+    return header + text(hint[0], 6, 32, { size: 11, fill: palette.primary }) +
+      text(hint[1], 6, 47, { size: 10, fill: palette.secondary });
+  }
+
+  const name = value.name?.split(" (")[0].trim() || "—";
+  const preferred = theme === "large" ? 15 : 13;
+  const font = theme === "bars" ? MONO : FONT;
+  const words = name.split(/\s+/);
+  const lines = words.length > 1 && fittingSize(name, font, preferred, 52) < 9
+    ? [words[0], words.slice(1).join(" ")] : [name];
+  const readout = lines.map((line, index) => {
+    const shortened = Array.from(line).length > 14 ? Array.from(line).slice(0, 13).join("") + "…" : line;
+    return text(shortened, 6, lines.length === 1 ? 37 : 30 + 13 * index,
+      { font, size: fittingSize(shortened, font, preferred, 52), fill: palette.primary });
+  }).join("");
+  const slots = [1, 2].map((slot, index) => {
+    const active = value.slot === slot;
+    const x = 6 + index * 27;
+    return rect(x, 48, 25, theme === "lines" ? 1 : 3, active ? accent : palette.grid) +
+      text(slot, x + 12.5, 60, { size: 7, font: MONO, fill: active ? accent : palette.secondary, anchor: "middle" });
+  }).join("");
+  return header + readout + slots;
+}
+
+function drawBitwarden() {
   if (bitwardenMark === undefined) {
     bitwardenMark = readFileSync(join(__dirname, "images", "bitwarden-mark.png")).toString("base64");
   }
-  const size = theme === "large" ? 38 : theme === "lines" ? 31 : 34;
-  const logo = `<image x="${(SIZE-size)/2}" y="${8+(38-size)/2}" width="${size}" height="${size}" xlink:href="data:image/png;base64,${bitwardenMark}"/>`;
-  const label = status === "unavailable" ? "Не найден" : "Bitwarden";
-  const wordmark = text(label, CENTER, 56, { size: 8.5, fill: status === "unavailable" ? SIGNAL.amber : palette.primary, anchor: "middle" });
-  return logo + wordmark;
+  const size = SIZE * 0.9;
+  const inset = SIZE * 0.05;
+  return `<image x="${inset}" y="${inset}" width="${size}" height="${size}" xlink:href="data:image/png;base64,${bitwardenMark}"/>`;
 }
 
 function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false, status }) {
-  const theme = Object.hasOwn(THEMES, settings.theme) ? settings.theme : "bars";
+  const theme = metric !== "bitwarden" && Object.hasOwn(THEMES, settings.theme) ? settings.theme : "bars";
   const preferences = { ...settings, theme };
   const palette = THEMES[theme];
   const definition = Object.hasOwn(METRICS, metric) ? METRICS[metric] : null;
@@ -381,7 +409,8 @@ function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, 
   else if (metric === "microphone") content = drawMicrophone(value, preferences);
   else if (metric === "network") content = drawNetwork(value, preferences, focus);
   else if (metric === "disk") content = drawDisk(value, preferences, focus);
-  else if (metric === "bitwarden") content = drawBitwarden(theme, status);
+  else if (metric === "audioOutput") content = drawAudioOutput(value, preferences, status);
+  else if (metric === "bitwarden") content = drawBitwarden();
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
   const xlink = flag || metric === "bitwarden" ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";
   return `<svg xmlns="http://www.w3.org/2000/svg"${xlink} width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">${background}${content}</svg>`;

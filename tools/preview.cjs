@@ -5,7 +5,7 @@ const path = require("node:path");
 const { renderSvg } = require("../plugin/com.auskraft.ajazz.ttx.sdPlugin/render.js");
 
 const metrics = ["cpuTemperature", "gpuTemperature", "ramUsedGb", "cpuLoad", "gpuLoad", "ip"];
-const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden"];
+const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden", "audioOutput"];
 const themes = {
   bars: "Пиксельные столбики",
   lines: "Тонкие линии",
@@ -22,7 +22,8 @@ const example = {
   microphone: [{ db: -16, muted: false }, []],
   network: [{ pingMs: 24, lossPct: 0, jitterMs: 3, history: [23, 28, 40, 22, 29, 25, 51, 22, 32, 23, 33, 24, 31] }, []],
   disk: [{ letter: "C", type: "SSD", usedGb: 286, totalGb: 447, freePct: 36 }, []],
-  bitwarden: [null, []]
+  bitwarden: [null, []],
+  audioOutput: [{ name: "Наушники", slot: 1, configured: true }, []]
 };
 
 function tile(metric, theme, focus = false, extra = {}, suffix = "") {
@@ -60,8 +61,8 @@ const variants = Object.entries(themes).map(([theme, name]) =>
   `<section><h2>${name}</h2><div class="device">${metrics.map((metric) => tile(metric, theme)).join("")}</div></section>`);
 const gamingVariants = Object.entries(themes).map(([theme, name]) => {
   const tiles = gameMetrics.slice(0, 4).map((metric) => tile(metric, theme));
-  const hardDrive = { letter: "D", type: "HDD", usedGb: 318, totalGb: 684, freePct: 54 };
-  tiles.push(tile("disk", theme, false, { value: hardDrive }, "-hdd"), tile("bitwarden", theme));
+  const audio = theme === "lines" ? { name: "Динамики", slot: 2, configured: true } : example.audioOutput[0];
+  tiles.push(tile("audioOutput", theme, false, { value: audio }), tile("bitwarden", theme));
   return `<section><h2>${name}</h2><div class="device">${tiles.join("")}</div></section>`;
 });
 fs.writeFileSync(path.join(target, "themes.html"), html(`
@@ -84,7 +85,7 @@ fs.writeFileSync(path.join(target, "themes.html"), html(`
 
 fs.writeFileSync(path.join(target, "game-themes.html"), html(`
   <main>
-    <header><div><p>AJAZZ AKP03R</p><h1>Игровые кнопки и Bitwarden</h1></div><span>Демонстрационные данные</span></header>
+    <header><div><p>AJAZZ AKP03R</p><h1>Игровые и системные кнопки</h1></div><span>Демонстрационные данные</span></header>
     <div class="themes">${gamingVariants.join("")}</div>
   </main>`, `
   *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}

@@ -3,7 +3,7 @@
 
   const prefix = 'com.auskraft.ajazz.ttx.';
   const hardwareMetricIds = ['cpuTemperature', 'gpuTemperature', 'ramUsedGb', 'cpuLoad', 'gpuLoad'];
-  const metricIds = [...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden'];
+  const metricIds = [...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput'];
   const themes = ['bars', 'lines', 'large'];
   const digitSizeRange = Object.freeze({ min: 12, max: 30 });
 
@@ -31,6 +31,11 @@
     return target.length <= 253 && (hostname.test(target) || ipv6.test(target)) ? target : '1.1.1.1';
   }
 
+  function normalizeAudioOutputId(value) {
+    return typeof value === 'string' && value.length <= 512 && value.trim() && !/[\x00-\x1f\x7f]/.test(value)
+      ? value : '';
+  }
+
   function normalize(settings) {
     const source = settings ?? {};
     const size = source.digitSize;
@@ -50,12 +55,17 @@
         : null,
       fpsProcess: normalizeFpsProcess(source.fpsProcess),
       pingTarget: normalizePingTarget(source.pingTarget),
+      audioOutputA: normalizeAudioOutputId(source.audioOutputA),
+      audioOutputB: normalizeAudioOutputId(source.audioOutputB),
       volumeLetter: typeof source.volumeLetter === 'string' && /^[a-z]:?$/i.test(source.volumeLetter.trim())
         ? source.volumeLetter.trim()[0].toUpperCase() : 'C'
     };
   }
 
-  const api = { metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess, digitSizeRange };
+  const api = {
+    metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess,
+    normalizeAudioOutputId, digitSizeRange
+  };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.AjazzSettings = api;
 })();
