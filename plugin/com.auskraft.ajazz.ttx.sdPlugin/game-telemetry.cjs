@@ -4,7 +4,7 @@ const { spawn } = require('node:child_process');
 const { isIP } = require('node:net');
 const path = require('node:path');
 const readline = require('node:readline');
-const { normalizeNetworkAdapterId } = require('./settings.js');
+const { normalizeNetworkAdapterId, topProcessModes } = require('./settings.js');
 
 const helper = path.join(__dirname, 'game-sensor', 'GameSensor.exe');
 const defaultTarget = '1.1.1.1';
@@ -119,6 +119,7 @@ function createGameTelemetry(onMicrophoneReading) {
   let interfaces = null;
   let defaultInterfaceId = '';
   let topCpu = null;
+  let topGpu = null;
   let topRam = null;
   const adapterWaiters = new Set();
 
@@ -159,6 +160,7 @@ function createGameTelemetry(onMicrophoneReading) {
     interfaces = null;
     defaultInterfaceId = '';
     topCpu = null;
+    topGpu = null;
     topRam = null;
     resolveAdapterWaiters(null);
   }
@@ -188,6 +190,7 @@ function createGameTelemetry(onMicrophoneReading) {
       resolveAdapterWaiters(availableAdapters());
     }
     if (systemDemand.has('process-cpu')) topCpu = topProcess(reading.topCpu, 'cpuPercent', percent);
+    if (systemDemand.has('process-gpu')) topGpu = topProcess(reading.topGpu, 'gpuPercent', percent);
     if (systemDemand.has('process-ram')) topRam = topProcess(reading.topRam, 'memoryBytes', nonnegative);
   }
 
@@ -225,9 +228,12 @@ function createGameTelemetry(onMicrophoneReading) {
     const next = new Set();
     if (actions.some(({ metric }) => metric === 'diskActivity')) next.add('disk');
     if (actions.some(({ metric }) => metric === 'networkSpeed')) next.add('network');
-    const processModes = actions.filter(({ metric }) => metric === 'topProcess')
-      .map(({ settings }) => settings.topProcessMode === 'ram' ? 'process-ram' : 'process-cpu');
-    for (const mode of processModes.sort()) next.add(mode);
+    for (const mode of topProcessModes) {
+      if (actions.some(({ metric, settings }) => (metric === 'topGpu' && mode === 'gpu') ||
+        (metric === 'topProcess' && (settings.topProcessMode === mode || settings.topProcessMode === 'rotate')))) {
+        next.add('process-' + mode);
+      }
+    }
     if (next.size === systemDemand.size && [...next].every((family) => systemDemand.has(family))) return;
     systemDemand = next;
 
@@ -244,6 +250,7 @@ function createGameTelemetry(onMicrophoneReading) {
       resolveAdapterWaiters(null);
     }
     if (!next.has('process-cpu')) topCpu = null;
+    if (!next.has('process-gpu')) topGpu = null;
     if (!next.has('process-ram')) topRam = null;
 
     const command = () => 'watch ' + [...systemDemand].join(' ');
@@ -310,6 +317,7 @@ function createGameTelemetry(onMicrophoneReading) {
       if (metric === 'network') return networkValue(targetFor(settings));
       if (metric === 'diskActivity') return diskActivity.get(letterFor(settings)) ?? null;
       if (metric === 'networkSpeed') return networkSpeed(settings);
+      if (metric === 'topGpu' || (metric === 'topProcess' && settings.topProcessMode === 'gpu')) return topGpu;
       if (metric === 'topProcess') return settings.topProcessMode === 'ram' ? topRam : topCpu;
       return null;
     },

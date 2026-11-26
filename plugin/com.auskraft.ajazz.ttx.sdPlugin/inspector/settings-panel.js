@@ -33,6 +33,8 @@ const volumeLetter = document.getElementById('volume-letter');
 const volumeLetterField = document.getElementById('volume-letter-field');
 const fanSettings = document.getElementById('fan-settings');
 const fanSource = document.getElementById('fan-source');
+const fanCycleField = document.getElementById('fan-cycle-field');
+const fanCycleSeconds = document.getElementById('fan-cycle-seconds');
 const fanStatus = document.getElementById('fan-status');
 const refreshFanSources = document.getElementById('refresh-fan-sources');
 const networkSpeedSettings = document.getElementById('network-speed-settings');
@@ -41,6 +43,8 @@ const networkSpeedStatus = document.getElementById('network-speed-status');
 const refreshNetworkAdapters = document.getElementById('refresh-network-adapters');
 const topProcessMode = document.getElementById('top-process-mode');
 const topProcessModeField = document.getElementById('top-process-mode-field');
+const topCycleField = document.getElementById('top-cycle-field');
+const topCycleSeconds = document.getElementById('top-cycle-seconds');
 const audioSettings = document.getElementById('audio-settings');
 const audioOutputA = document.getElementById('audio-output-a');
 const audioOutputB = document.getElementById('audio-output-b');
@@ -57,7 +61,7 @@ const bitwardenPathHint = document.getElementById('bitwarden-path-hint');
 const connection = document.getElementById('connection');
 const {
   metricForAction, supportsTraffic, normalize, normalizeAudioOutputId, normalizeCameraId, normalizeFpsExecutable,
-  normalizeBitwardenPath, normalizeFanSourceId, normalizeNetworkAdapterId, digitSizeRange
+  normalizeBitwardenPath, normalizeFanSourceId, normalizeNetworkAdapterId, digitSizeRange, cycleIntervals
 } = globalThis.AjazzSettings;
 const devicePickers = {
   audioOutput: {
@@ -89,6 +93,11 @@ for (let size = digitSizeRange.min; size <= digitSizeRange.max; size += 1) {
   digitSize.add(new Option(`${size} px`, String(size)));
 }
 for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') volumeLetter.add(new Option(letter + ':', letter));
+for (const seconds of cycleIntervals) {
+  const label = seconds + ' сек.';
+  fanCycleSeconds.add(new Option(label, String(seconds)));
+  topCycleSeconds.add(new Option(label, String(seconds)));
+}
 
 function updateIpFields({ ipMode, ipDisplay }) {
   const external = ipMode === 'public';
@@ -183,10 +192,10 @@ function updateCameraFields() {
   }
 }
 
-function updateSourceChoice(select, selected, defaultOption, status, emptyHint) {
+function updateSourceChoice(select, selected, defaultOptions, status, emptyHint) {
   const devices = deviceReading?.devices ?? [];
-  const missing = selected !== defaultOption.value && !devices.some(({ id }) => id === selected);
-  select.replaceChildren(defaultOption);
+  const missing = !defaultOptions.some(({ value }) => value === selected) && !devices.some(({ id }) => id === selected);
+  select.replaceChildren(...defaultOptions);
   for (const { id, name } of devices) select.add(new Option(name, id));
   if (missing) select.add(new Option('Сохранённый источник недоступен', selected));
   select.value = selected;
@@ -199,13 +208,14 @@ function updateSourceChoice(select, selected, defaultOption, status, emptyHint) 
 
 function updateFanSources() {
   refreshFanSources.disabled = Boolean(deviceRequestId);
-  updateSourceChoice(fanSource, settings.fanSource, new Option('Авто (CPU, затем GPU)', 'auto'), fanStatus,
+  const modes = [new Option('Авто (CPU, затем GPU)', 'auto'), new Option('Все по очереди', 'cycle')];
+  updateSourceChoice(fanSource, settings.fanSource, modes, fanStatus,
     'Датчики вентилятора не найдены. Попробуй обновить список.');
 }
 
 function updateNetworkAdapters() {
   refreshNetworkAdapters.disabled = Boolean(deviceRequestId);
-  updateSourceChoice(networkAdapter, settings.networkAdapterId, new Option('Авто (основное подключение)', ''),
+  updateSourceChoice(networkAdapter, settings.networkAdapterId, [new Option('Авто (основное подключение)', '')],
     networkSpeedStatus, 'Не удалось получить список сетевых адаптеров.');
 }
 
@@ -226,7 +236,11 @@ function populate(incoming) {
   }
   pingTarget.value = settings.pingTarget;
   volumeLetter.value = settings.volumeLetter;
+  fanCycleSeconds.value = String(settings.fanCycleSeconds);
+  topCycleSeconds.value = String(settings.topCycleSeconds);
+  fanCycleField.hidden = fanSettings.hidden || settings.fanSource !== 'cycle';
   topProcessMode.value = settings.topProcessMode;
+  topCycleField.hidden = topProcessModeField.hidden || settings.topProcessMode !== 'rotate';
   audioShowVolume.checked = settings.audioShowVolume;
   if (!bitwardenDraft) bitwardenPath.value = settings.bitwardenPath;
   updateIpFields(settings);
@@ -237,7 +251,7 @@ function populate(incoming) {
 
 for (const input of [
   theme, digitSize, indicatorSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress, fpsMode, fpsProcess,
-  pingTarget, volumeLetter, fanSource, networkAdapter, topProcessMode,
+  pingTarget, volumeLetter, fanSource, fanCycleSeconds, networkAdapter, topProcessMode, topCycleSeconds,
   audioOutputA, audioOutputB, audioShowVolume, cameraDevice, bitwardenPath
 ]) {
   input.addEventListener('change', () => {
@@ -278,8 +292,10 @@ for (const input of [
       pingTarget: pingTarget.value,
       volumeLetter: volumeLetter.value,
       fanSource: fanSettings.hidden ? settings.fanSource : fanSource.value,
+      fanCycleSeconds: fanCycleSeconds.value,
       networkAdapterId: networkSpeedSettings.hidden ? settings.networkAdapterId : networkAdapter.value,
       topProcessMode: topProcessMode.value,
+      topCycleSeconds: topCycleSeconds.value,
       audioShowVolume: audioShowVolume.checked,
       audioOutputA: audioSettings.hidden ? settings.audioOutputA : audioOutputA.value,
       audioOutputB: audioSettings.hidden ? settings.audioOutputB : audioOutputB.value,

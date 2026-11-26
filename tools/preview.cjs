@@ -7,6 +7,7 @@ const { renderSvg } = require("../plugin/com.auskraft.ajazz.ttx.sdPlugin/render.
 const metrics = ["cpuTemperature", "gpuTemperature", "ramUsedGb", "cpuLoad", "gpuLoad", "ip"];
 const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden", "audioOutput", "camera"];
 const systemMetrics = ["gpuPower", "fanSpeed", "diskActivity", "networkSpeed", "topProcess"];
+const extraMetrics = ["topGpu", "weather"];
 const themes = {
   bars: "Пиксельные столбики",
   lines: "Тонкие линии",
@@ -34,7 +35,9 @@ const example = {
     [4, 21, 48, 27, 35, 49, 76, 132, 126, 124].map((rate) => ({ readBytesPerSecond: rate * 1e6, writeBytesPerSecond: 8e6 }))],
   networkSpeed: [{ receiveBytesPerSecond: 10525000, sendBytesPerSecond: 310000 },
     [18, 24, 37, 51, 81, 90, 79, 68, 91, 84].map((rate) => ({ receiveBytesPerSecond: rate * 125000, sendBytesPerSecond: 310000 }))],
-  topProcess: [{ name: "Korabli64", cpuPercent: 28.4 }, []]
+  topProcess: [{ name: "Korabli64", cpuPercent: 28.4 }, []],
+  topGpu: [{ name: "Korabli64", gpuPercent: 92.4 }, []],
+  weather: [{ temperature: -3.7, feelsLike: -7.1, weatherCode: 71, isDay: true }, []]
 };
 
 function tile(metric, theme, focus = false, extra = {}, suffix = "") {
@@ -66,7 +69,7 @@ function html(body, style) {
 const target = process.argv[2];
 if (!target) throw new Error("Pass a temporary preview directory.");
 fs.mkdirSync(target, { recursive: true });
-const sheet = [logo, logo, ...[...metrics, ...gameMetrics, ...systemMetrics].map((metric) => tile(metric, "bars"))];
+const sheet = [logo, logo, ...[...metrics, ...gameMetrics, ...systemMetrics, ...extraMetrics].map((metric) => tile(metric, "bars"))];
 fs.writeFileSync(path.join(target, "icons.html"), html("<main>" + sheet.join("") + "</main>",
   "html,body{margin:0}main{display:grid;grid-template-columns:repeat(4,128px);width:512px}svg{display:block;width:128px;height:128px}"));
 
@@ -120,6 +123,27 @@ function widgetGallery(title, panels) {
 }
 fs.writeFileSync(path.join(target, "game-themes.html"), widgetGallery("Игровые и системные кнопки", gamingVariants));
 fs.writeFileSync(path.join(target, "system-telemetry.html"), widgetGallery("Расширенный мониторинг", systemVariants));
+
+fs.writeFileSync(path.join(target, "rotation-weather.html"), html(`
+  <main>
+    <header><h1>Карусели и погода</h1><span>Демонстрационные данные</span></header>
+    <div class="groups">
+      <section><h2>Топ процессов</h2><div class="device">${tile("topProcess", "bars")}${tile("topGpu", "bars")}${tile("topProcess", "bars", false, {
+        value: { name: "Korabli64", memoryBytes: 3070901617 }, settings: { topProcessMode: "ram" }
+      }, "-ram")}</div></section>
+      <section><h2>Вентиляторы</h2><div class="device">${tile("fanSpeed", "ice")}${tile("fanSpeed", "ice", false, {
+        value: { name: "CPU Fan", reading: 970, unit: "rpm" }, history: [901, 920, 961, 970]
+      }, "-cpu")}</div></section>
+      <section><h2>Погода</h2><div class="device">${tile("weather", "ice")}</div></section>
+    </div>
+  </main>`, `
+  *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
+  main{padding:24px 28px;width:795px}header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:17px}
+  h1{margin:0;font-size:23px;font-weight:650}header span{font-size:12px;color:#a9b6c9}
+  h2{margin:0 0 8px;font-size:14px;font-weight:600}.groups{display:flex;gap:12px}
+  .device{display:flex;gap:7px;width:fit-content;padding:8px;border:1px solid #424b5b;border-radius:12px;background:#252d39}
+  svg{width:100px;height:100px;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
+`));
 
 fs.writeFileSync(path.join(target, "camera-microphone.html"), html(`
   <main>

@@ -10,10 +10,11 @@ const { createFpsMonitor, listFpsApps } = require('./fps-telemetry.cjs');
 const { createAudioOutput } = require('./audio-output.cjs');
 const { CameraControl } = require('./camera-control.cjs');
 const { openBitwarden } = require('./bitwarden-launch.cjs');
-const { hardwareMetricIds, metricForAction, normalize } = require('./settings.js');
+const { createWeather } = require('./weather.cjs');
+const { hardwareMetricIds, metricForAction, normalize, topProcessModes } = require('./settings.js');
 
 const numericMetrics = [...hardwareMetricIds.filter((metric) => metric !== 'fanSpeed'), 'gpuHotspot'];
-const gameMetrics = new Set(['microphone', 'network', 'disk', 'diskActivity', 'networkSpeed', 'topProcess']);
+const gameMetrics = new Set(['microphone', 'network', 'disk', 'diskActivity', 'networkSpeed', 'topProcess', 'topGpu']);
 const historyLength = 30;
 const tickInterval = 1000;
 const audioPollInterval = 2000;
@@ -24,12 +25,34 @@ const deviceRequests = {
   audioOutput: 'audioOutputs', camera: 'cameras', fps: 'fpsApps', fanSpeed: 'fanSources', networkSpeed: 'networkAdapters'
 };
 
-function selectedFan({ fanSource }, fans) {
+function selectedFan(entry, fans, now) {
   if (!Array.isArray(fans)) return null;
-  if (fanSource !== 'auto') return fans.find(({ id }) => id === fanSource) ?? null;
+  const { fanSource, fanCycleSeconds } = entry.settings;
+  if (fanSource !== 'auto' && fanSource !== 'cycle') return fans.find(({ id }) => id === fanSource) ?? null;
   const readable = fans.filter(({ reading }) => Number.isFinite(reading));
+  if (fanSource === 'cycle') {
+    if (!readable.length) {
+      entry.fanCycleId = null;
+      return null;
+    }
+    let index = readable.findIndex(({ id }) => id === entry.fanCycleId);
+    if (index < 0 || now >= entry.fanCycleNext) {
+      index = (index + 1) % readable.length;
+      entry.fanCycleId = readable[index].id;
+      entry.fanCycleNext = now + fanCycleSeconds * 1000;
+    }
+    return readable[index];
+  }
   return readable.find(({ name }) => /cpu|processor|процессор/i.test(name)) ??
     readable.find(({ id }) => id === 'gpu') ?? readable[0] ?? null;
+}
+
+function topProcessMode(entry, now) {
+  if (entry.metric === 'topGpu') return 'gpu';
+  const { topProcessMode: mode, topCycleSeconds } = entry.settings;
+  if (mode !== 'rotate') return mode;
+  const elapsed = Math.max(0, now - entry.topCycleStarted);
+  return topProcessModes[Math.floor(elapsed / (topCycleSeconds * 1000)) % topProcessModes.length];
 }
 
 function recordHistory(entry, source, value, sample) {
@@ -94,6 +117,9 @@ function startPlugin({ port, uuid, registerEvent }) {
   let cameraRead = null;
   let cameraNextCheck = 0;
   let cameraSwitch = null;
+  let weather = null;
+  let weatherSnapshot = null;
+  let weatherRead = null;
   let animationTimer = null;
   let timer = null;
 
@@ -136,6 +162,16 @@ function startPlugin({ port, uuid, registerEvent }) {
     void resolveAddress(entry, request, withCountry);
   }
 
+  function refreshWeather() {
+    weather ??= createWeather();
+    if (weatherRead || !weather.isDue()) return;
+    weatherRead = weather.read().catch(() => weatherSnapshot).then((reading) => {
+      weatherSnapshot = reading;
+      weatherRead = null;
+      paintMetric('weather');
+    });
+  }
+
   function paint(entry, now = Date.now(), sample = false) {
     const { context, settings, focus } = entry;
     const metric = entry.metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot'
@@ -144,6 +180,7 @@ function startPlugin({ port, uuid, registerEvent }) {
     let value = snapshot[metric] ?? null;
     let history = histories[metric] ?? [];
     let status;
+    let renderSettings = settings;
     if (isAddress) {
       value = entry.ipValue;
       status = entry.ipStatus;
@@ -158,12 +195,17 @@ function startPlugin({ port, uuid, registerEvent }) {
       value = cameraValue(entry);
       status = value.enabled === null && !value.selectionRequired ? 'unavailable' : 'ready';
     } else if (metric === 'fanSpeed') {
-      const fan = selectedFan(settings, snapshot.fans);
+      const fan = selectedFan(entry, snapshot.fans, now);
       const reading = Number.isFinite(fan?.reading) ? fan.reading : null;
       value = fan ? { reading, unit: fan.unit, name: fan.name } : null;
       status = reading === null ? 'unavailable' : 'ready';
       const source = reading === null ? null : JSON.stringify([fan.id, fan.unit]);
       history = recordHistory(entry, source, reading, sample);
+    } else if (metric === 'weather') {
+      value = weatherSnapshot;
+    } else if (metric === 'topProcess' || metric === 'topGpu') {
+      renderSettings = { ...settings, topProcessMode: topProcessMode(entry, now) };
+      value = game?.value(metric, renderSettings) ?? null;
     } else if (gameMetrics.has(metric)) {
       value = game?.value(metric, settings) ?? null;
       history = value?.history ?? [];
@@ -180,7 +222,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       metric,
       history,
       value,
-      settings,
+      settings: renderSettings,
       focus,
       country: entry.ipCountry,
       showFlag: Boolean(!focus && entry.showFlag),
@@ -403,6 +445,7 @@ function startPlugin({ port, uuid, registerEvent }) {
     if (cameraControl && !cameraSwitch && now >= cameraNextCheck) void readCameras();
     for (const entry of onscreen.values()) {
       if (entry.metric === 'ip') refreshAddress(entry, now);
+      else if (entry.metric === 'weather') refreshWeather();
       paint(entry, now, sample);
     }
     syncAnimation();
@@ -530,6 +573,7 @@ function startPlugin({ port, uuid, registerEvent }) {
         context, device, metric, settings: normalize(payload?.settings),
         focus: onscreen.get(context)?.focus ?? false,
         history: [], historySource: null,
+        fanCycleId: null, fanCycleNext: 0, topCycleStarted: Date.now(),
         ipNextCheck: 0, gettingIp: null, ipValue: null, ipCountry: null, showFlag: false, ipStatus: 'loading',
         lastImage: null
       });
@@ -566,6 +610,15 @@ function startPlugin({ port, uuid, registerEvent }) {
       } else if (entry.settings.ipSeconds !== settings.ipSeconds) {
         entry.ipNextCheck = Date.now() + settings.ipSeconds * 1000;
       }
+      if (entry.metric === 'fanSpeed') {
+        if (entry.settings.fanSource !== settings.fanSource) {
+          entry.fanCycleId = null;
+        } else if (entry.settings.fanCycleSeconds !== settings.fanCycleSeconds) {
+          entry.fanCycleNext = Date.now() + settings.fanCycleSeconds * 1000;
+        }
+      }
+      if (entry.metric === 'topProcess' && (entry.settings.topProcessMode !== settings.topProcessMode ||
+          entry.settings.topCycleSeconds !== settings.topCycleSeconds)) entry.topCycleStarted = Date.now();
       entry.settings = settings;
       syncCollectors();
       update(Date.now(), false);
@@ -579,6 +632,7 @@ function startPlugin({ port, uuid, registerEvent }) {
   function stop() {
     onscreen.clear();
     syncCollectors();
+    weather?.close();
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
     if (socket.readyState !== WebSocket.CLOSED) socket.terminate();

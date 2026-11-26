@@ -5,10 +5,12 @@
   const hardwareMetricIds = ['cpuTemperature', 'gpuTemperature', 'ramUsedGb', 'cpuLoad', 'gpuLoad', 'gpuPower', 'fanSpeed'];
   const metricIds = [
     ...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput', 'camera',
-    'diskActivity', 'networkSpeed', 'topProcess'
+    'diskActivity', 'networkSpeed', 'topProcess', 'topGpu', 'weather'
   ];
   const themes = ['bars', 'lines', 'large', 'amber', 'ice'];
   const digitSizeRange = Object.freeze({ min: 12, max: 30 });
+  const cycleIntervals = Object.freeze([5, 10, 15, 20, 25]);
+  const topProcessModes = Object.freeze(['cpu', 'gpu', 'ram']);
 
   function metricForAction(action) {
     if (typeof action !== 'string' || !action.startsWith(prefix)) return null;
@@ -52,6 +54,11 @@
       ? target : '';
   }
 
+  function normalizeCycleSeconds(value) {
+    const seconds = Number(value);
+    return cycleIntervals.includes(seconds) ? seconds : 10;
+  }
+
   function normalize(settings) {
     const source = settings ?? {};
     const size = source.digitSize;
@@ -79,8 +86,10 @@
       cameraId: normalizeDeviceId(source.cameraId),
       bitwardenPath: normalizeBitwardenPath(source.bitwardenPath),
       fanSource: normalizeDeviceId(source.fanSource) || 'auto',
+      fanCycleSeconds: normalizeCycleSeconds(source.fanCycleSeconds),
       networkAdapterId: normalizeDeviceId(source.networkAdapterId),
-      topProcessMode: source.topProcessMode === 'ram' ? 'ram' : 'cpu',
+      topProcessMode: topProcessModes.includes(source.topProcessMode) ? source.topProcessMode : 'rotate',
+      topCycleSeconds: normalizeCycleSeconds(source.topCycleSeconds),
       indicatorSize: ['small', 'medium', 'large'].includes(source.indicatorSize) ? source.indicatorSize : 'medium',
       volumeLetter: typeof source.volumeLetter === 'string' && /^[a-z]:?$/i.test(source.volumeLetter.trim())
         ? source.volumeLetter.trim()[0].toUpperCase() : 'C'
@@ -91,7 +100,7 @@
     metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess, normalizeFpsExecutable,
     normalizeAudioOutputId: normalizeDeviceId, normalizeCameraId: normalizeDeviceId,
     normalizeFanSourceId: normalizeDeviceId, normalizeNetworkAdapterId: normalizeDeviceId,
-    normalizeBitwardenPath, digitSizeRange
+    normalizeBitwardenPath, digitSizeRange, cycleIntervals, topProcessModes
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.AjazzSettings = api;

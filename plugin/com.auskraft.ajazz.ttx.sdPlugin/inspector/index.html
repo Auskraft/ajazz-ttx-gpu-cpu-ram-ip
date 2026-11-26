@@ -141,6 +141,10 @@
         <span>Датчик вентилятора</span>
         <select id="fan-source" aria-describedby="fan-status"></select>
       </label>
+      <label class="field" id="fan-cycle-field" hidden>
+        <span>Сменять датчик каждые</span>
+        <select id="fan-cycle-seconds"></select>
+      </label>
       <p role="status" id="fan-status" hidden></p>
       <button id="refresh-fan-sources" type="button">Обновить список</button>
     </div>
@@ -155,9 +159,15 @@
     <label class="field" id="top-process-mode-field" hidden>
       <span>Сортировать процессы по</span>
       <select id="top-process-mode">
+        <option value="rotate">CPU → GPU → RAM</option>
         <option value="cpu">Нагрузке на CPU</option>
+        <option value="gpu">Нагрузке на GPU</option>
         <option value="ram">Использованию ОЗУ</option>
       </select>
+    </label>
+    <label class="field" id="top-cycle-field" hidden>
+      <span>Сменять показатель каждые</span>
+      <select id="top-cycle-seconds"></select>
     </label>
     <div id="audio-settings" class="device-settings" hidden>
       <label class="field">

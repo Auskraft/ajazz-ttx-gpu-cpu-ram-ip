@@ -13,7 +13,7 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("AJAZZ TTX Setup")]
 [assembly: AssemblyDescription("AJAZZ Stream Dock monitor setup")]
 [assembly: AssemblyCompany("Auskraft")]
-[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
 
 internal static class Setup
 {

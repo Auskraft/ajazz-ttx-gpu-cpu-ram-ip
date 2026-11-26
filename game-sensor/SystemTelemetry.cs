@@ -20,17 +20,21 @@ internal sealed class SystemTelemetry
         Network = 2,
         ProcessCpu = 4,
         ProcessRam = 8,
-        All = Disk | Network | ProcessCpu | ProcessRam
+        ProcessGpu = 16,
+        All = Disk | Network | ProcessCpu | ProcessRam | ProcessGpu
     }
 
     private const int IntervalMs = 1000;
     private const string DiskQuery = "SELECT Name, DiskReadBytesPersec, DiskWriteBytesPersec, PercentIdleTime, " +
         "PercentIdleTime_Base, Timestamp_PerfTime, Frequency_PerfTime FROM Win32_PerfRawData_PerfDisk_LogicalDisk";
+    private const string GpuQuery = "SELECT Name, UtilizationPercentage, Timestamp_Sys100NS " +
+        "FROM Win32_PerfRawData_GPUPerformanceCounters_GPUEngine";
     private static readonly uint RouteProbeIPv4 = BitConverter.ToUInt32(IPAddress.Parse("1.1.1.1").GetAddressBytes(), 0);
     private static readonly byte[] RouteProbeIPv6 = IPv6RouteAddress();
     private Dictionary<string, DiskCounters> diskBaseline = new Dictionary<string, DiskCounters>();
     private Dictionary<string, NetworkCounters> networkBaseline = new Dictionary<string, NetworkCounters>();
     private Dictionary<int, ProcessCounters> processBaseline = new Dictionary<int, ProcessCounters>();
+    private Dictionary<string, GpuEngineCounters> gpuBaseline = new Dictionary<string, GpuEngineCounters>();
 
     public static int Run(string[] args, Action<object> emit)
     {
@@ -95,6 +99,7 @@ internal sealed class SystemTelemetry
                 case "network": result |= Metrics.Network; break;
                 case "process-cpu": result |= Metrics.ProcessCpu; break;
                 case "process-ram": result |= Metrics.ProcessRam; break;
+                case "process-gpu": result |= Metrics.ProcessGpu; break;
             }
         }
         return result;
@@ -104,7 +109,7 @@ internal sealed class SystemTelemetry
     {
         List<object> disks = null, interfaces = null;
         string defaultInterfaceId = null;
-        object topCpu = null, topRam = null;
+        object topCpu = null, topRam = null, topGpu = null;
         if ((requested & Metrics.Disk) != 0) disks = ReadDisks();
         else diskBaseline.Clear();
         if ((requested & Metrics.Network) != 0) interfaces = ReadNetwork(out defaultInterfaceId);
@@ -112,7 +117,9 @@ internal sealed class SystemTelemetry
         if ((requested & Metrics.ProcessCpu) == 0) processBaseline.Clear();
         if ((requested & (Metrics.ProcessCpu | Metrics.ProcessRam)) != 0)
             ReadProcesses(requested, out topCpu, out topRam);
-        return new { disks, interfaces, defaultInterfaceId, topCpu, topRam };
+        if ((requested & Metrics.ProcessGpu) != 0) topGpu = ReadGpuProcess();
+        else gpuBaseline.Clear();
+        return new { disks, interfaces, defaultInterfaceId, topCpu, topRam, topGpu };
     }
 
     private sealed class DiskCounters
@@ -126,8 +133,7 @@ internal sealed class SystemTelemetry
         var readings = new List<object>();
         try
         {
-            var options = new EnumerationOptions { Timeout = TimeSpan.FromMilliseconds(750) };
-            using (var query = new ManagementObjectSearcher(new ManagementScope(@"root\CIMv2"), new ObjectQuery(DiskQuery), options))
+            using (var query = PerformanceQuery(DiskQuery))
             using (var rows = query.Get())
             {
                 foreach (ManagementBaseObject row in rows)
@@ -173,6 +179,12 @@ internal sealed class SystemTelemetry
         catch (COMException) { }
         diskBaseline = next;
         return readings;
+    }
+
+    private static ManagementObjectSearcher PerformanceQuery(string query)
+    {
+        var options = new EnumerationOptions { Timeout = TimeSpan.FromMilliseconds(750) };
+        return new ManagementObjectSearcher(new ManagementScope(@"root\CIMv2"), new ObjectQuery(query), options);
     }
 
     private static ulong Counter(ManagementBaseObject row, string name)
@@ -330,6 +342,94 @@ internal sealed class SystemTelemetry
             }
         }
         processBaseline = next;
+    }
+
+    private struct GpuEngineCounters
+    {
+        public ulong RunningTime, Clock;
+    }
+
+    private struct GpuUsage
+    {
+        public double Percent;
+        public ulong PreviousClock;
+    }
+
+    private object ReadGpuProcess()
+    {
+        var next = new Dictionary<string, GpuEngineCounters>();
+        var busiestEngines = new Dictionary<int, GpuUsage>();
+        try
+        {
+            using (var query = PerformanceQuery(GpuQuery))
+            using (var rows = query.Get())
+            {
+                foreach (ManagementBaseObject row in rows)
+                {
+                    using (row)
+                    {
+                        string engine = Convert.ToString(row["Name"], CultureInfo.InvariantCulture);
+                        int pid;
+                        if (!TryReadGpuPid(engine, out pid)) continue;
+
+                        // The raw PERF_100NSEC_TIMER value is accumulated GPU time in the clock's units.
+                        var counter = new GpuEngineCounters
+                        {
+                            RunningTime = Counter(row, "UtilizationPercentage"),
+                            Clock = Counter(row, "Timestamp_Sys100NS")
+                        };
+                        next[engine] = counter;
+                        GpuEngineCounters previous;
+                        if (!gpuBaseline.TryGetValue(engine, out previous) || previous.Clock == 0 ||
+                            counter.Clock <= previous.Clock || counter.RunningTime <= previous.RunningTime) continue;
+
+                        double percent = BoundPercent(100.0 * (counter.RunningTime - previous.RunningTime) /
+                            (counter.Clock - previous.Clock));
+                        // Engines may run in parallel. Task Manager represents each process by its busiest engine.
+                        GpuUsage busiest;
+                        if (!busiestEngines.TryGetValue(pid, out busiest) || percent > busiest.Percent)
+                            busiestEngines[pid] = new GpuUsage { Percent = percent, PreviousClock = previous.Clock };
+                    }
+                }
+            }
+        }
+        catch (ManagementException) { gpuBaseline.Clear(); return null; }
+        catch (UnauthorizedAccessException) { gpuBaseline.Clear(); return null; }
+        catch (COMException) { gpuBaseline.Clear(); return null; }
+        gpuBaseline = next;
+
+        object top = null;
+        double bestPercent = 0;
+        foreach (var processUsage in busiestEngines)
+        {
+            var sample = processUsage.Value;
+            if (sample.Percent <= bestPercent) continue;
+            int pid = processUsage.Key;
+            try
+            {
+                using (Process process = Process.GetProcessById(pid))
+                {
+                    // A process created after the older sample may have inherited a released PID.
+                    if ((ulong)process.StartTime.ToFileTimeUtc() > sample.PreviousClock || process.HasExited) continue;
+                    string name = process.ProcessName;
+                    bestPercent = sample.Percent;
+                    top = new { name, pid, gpuPercent = sample.Percent };
+                }
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            catch (Win32Exception) { }
+        }
+        return top;
+    }
+
+    private static bool TryReadGpuPid(string engine, out int pid)
+    {
+        pid = 0;
+        if (!engine.StartsWith("pid_", StringComparison.Ordinal)) return false;
+        int end = engine.IndexOf('_', 4);
+        return end > 4 && int.TryParse(engine.Substring(4, end - 4), NumberStyles.None,
+            CultureInfo.InvariantCulture, out pid) && pid > 0;
     }
 
     private static double BoundPercent(double value)

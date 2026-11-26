@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 
-const GIB = 1024 ** 3;
+const GB = 1e9;
 const SAMPLE_INTERVAL_MS = 1000;
 const GPU_TIMEOUT_MS = 8000;
 const GPU_RESTART_DELAY_MS = 10000;
@@ -35,8 +35,8 @@ function memoryUsage() {
   const used = total - os.freemem();
 
   return {
-    ramUsedGb: total > 0 ? Math.max(0, Math.min(used, total)) / GIB : null,
-    ramTotalGb: total > 0 ? total / GIB : null,
+    ramUsedGb: total > 0 ? Math.max(0, Math.min(used, total)) / GB : null,
+    ramTotalGb: total > 0 ? total / GB : null,
   };
 }
 

@@ -11,7 +11,7 @@ const MONO = "Consolas,monospace";
 const CATEGORIES = {
   cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa",
   fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879", audio: "#87e2d5",
-  camera: "#aebaff", fans: "#8ce6d5"
+  camera: "#aebaff", fans: "#8ce6d5", weather: "#8adcf7"
 };
 const SIGNAL = { green: "#79ef87", amber: "#ffcd69", red: "#ff6777" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
@@ -29,7 +29,7 @@ const METRICS = {
   cpuTemperature: { label: "CPU °C", group: "cpu", unit: "°C", limits: [60, 75, 90] },
   gpuTemperature: { label: "GPU °C", group: "gpu", unit: "°C", limits: [50, 65, 85] },
   gpuHotspot: { label: "GPU HOT", group: "gpu", unit: "°C", limits: [65, 80, 100] },
-  ramUsedGb: { label: "RAM ГБ", group: "ram", unit: "GB" },
+  ramUsedGb: { label: "RAM GB", group: "ram", unit: "GB" },
   cpuLoad: { label: "CPU %", group: "cpu", unit: "%", limits: [0, 50, 100] },
   gpuLoad: { label: "GPU %", group: "gpu", unit: "%", limits: [0, 50, 100] },
   ip: { label: "ВНЕШНИЙ IP", group: "ip" }
@@ -234,7 +234,7 @@ function drawReading(metric, value, history, settings, snapshot, focus) {
   const hasValue = Number.isFinite(value);
   const reading = hasValue ? (memory ? value.toFixed(1).replace(".", ",") : Math.round(value)) : "—";
   const font = numberFont(theme);
-  if (focus) return drawLargeValue(reading, hasValue ? (memory ? "ГБ" : metric.unit) : "", palette, font);
+  if (focus) return drawLargeValue(reading, hasValue ? metric.unit : "", palette, font);
   const suffix = hasValue ? (memory ? (totalMemory ? "/" + Math.round(totalMemory) : "") : metric.unit) : "";
   const label = text(metric.label, 6, 13, { size: 9, fill: color });
   const defaultSize = memory && String(reading).length > 4 ? 17 :
@@ -277,8 +277,8 @@ function gameGraph(group, measurements, theme, top, maximum, bottom) {
   });
 }
 
-function decimal(value) {
-  return value.toFixed(1).replace(".", ",");
+function decimal(value, places = 1) {
+  return value.toFixed(places).replace(".", ",");
 }
 
 function drawFps(value, history, settings, focus, status, animationPhase) {
@@ -501,24 +501,76 @@ function drawRates(value, history, settings, focus, disk = false) {
   return header + rows + graph + note;
 }
 
-function drawTopProcess(value, settings, focus) {
+function drawTopProcess(value, settings, focus, mode = settings.topProcessMode) {
   const { theme } = settings;
   const palette = THEMES[theme];
-  const memory = settings.topProcessMode === "ram";
-  const group = memory ? "ram" : "cpu";
-  const reading = memory ? value?.memoryBytes : value?.cpuPercent;
+  const group = mode === "ram" || mode === "gpu" ? mode : "cpu";
+  const memory = group === "ram";
+  const reading = memory ? value?.memoryBytes : group === "gpu" ? value?.gpuPercent : value?.cpuPercent;
   const available = Number.isFinite(reading);
-  const gigabytes = memory && reading >= 1073741824;
-  const unit = !available ? "" : memory ? gigabytes ? "ГиБ" : "МиБ" : "%";
-  let amount = "—";
-  if (available) amount = memory ? gigabytes ? decimal(reading / 1073741824) :
-    String(Math.round(reading / 1048576)) : decimal(reading);
+  const unit = !available ? "" : memory ? "GB" : "%";
+  const amount = !available ? "—" : memory ? decimal(reading / 1e9, reading < 1e9 ? 2 : 1) : decimal(reading);
   if (focus) return drawLargeValue(amount, unit, palette, numberFont(theme));
-  const header = gameHeader(memory ? "ТОП RAM" : "ТОП CPU", CATEGORIES[group], theme);
+  const header = gameHeader("ТОП " + group.toUpperCase(), CATEGORIES[group], theme);
   const primary = gameValue(amount, unit, theme, settings, { baseline: 35, preferred: theme === "large" ? 28 : 24 });
   const name = shortName(value?.name, 15) || "Нет данных";
   const subtitle = text(name, 6, 50, { size: fittingSize(name, FONT, 9.5, 52), fill: palette.secondary });
   return header + primary + subtitle;
+}
+
+function weatherCondition(code, isDay) {
+  if (code === 0 || code === 1) {
+    return { text: code === 0 ? "Ясно" : "Почти ясно", icon: isDay ? "sun" : "moon" };
+  }
+  if (code === 2 || code === 3) return { text: code === 2 ? "Облачно" : "Пасмурно", icon: "cloud" };
+  if (code === 45 || code === 48) return { text: "Туман", icon: "fog" };
+  if ([51, 53, 55, 56, 57].includes(code)) return { text: "Морось", icon: "rain" };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { text: "Дождь", icon: "rain" };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { text: "Снег", icon: "snow" };
+  if ([95, 96, 99].includes(code)) return { text: "Гроза", icon: "storm" };
+  return { text: "", icon: "" };
+}
+
+function drawWeatherIcon(icon, color) {
+  const cloud = '<path d="M4 12H13a3 3 0 1 0-.9-5.8A4.2 4.2 0 0 0 4 7a2.5 2.5 0 1 0 0 5z"/>';
+  const shapes = {
+    sun: '<circle cx="8.5" cy="8.5" r="3.7"/><path d="M8.5 1v2m0 11v2M1 8.5h2m11 0h2M3.2 3.2l1.4 1.4m7.8 7.8 1.4 1.4m0-10.6-1.4 1.4m-7.8 7.8-1.4 1.4"/>',
+    moon: '<path d="M13.6 10.5A6.4 6.4 0 0 1 6.1 3 6.5 6.5 0 1 0 13.6 10.5z"/><path d="M12 2v3m-1.5-1.5h3"/>',
+    cloud,
+    fog: '<path d="M2 5h13M1 8.5h12M3 12h13"/>',
+    rain: cloud + '<path d="m5 14-.9 1.7m4-1.7-.9 1.7m4-1.7-.9 1.7"/>',
+    snow: cloud + '<path d="M4.8 15h.4m3.5 1.3h.4m3.4-1.3h.4"/>',
+    storm: cloud + '<path d="m9 12-1.6 2.2h2.3L8.6 17"/>'
+  };
+  return shapes[icon] ? `<g transform="translate(42 19)" fill="none" stroke="${color}" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">${shapes[icon]}</g>` : "";
+}
+
+function temperatureLabel(degrees) {
+  return String(Math.round(degrees)).replace("-", "−");
+}
+
+function drawWeather(value, settings, focus) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const font = numberFont(theme);
+  const available = Number.isFinite(value?.temperature);
+  const temperature = available ? temperatureLabel(value.temperature) : "—";
+  if (focus) {
+    const note = value?.stale ? text("Нет обновления", CENTER, 60, { size: 7, fill: SIGNAL.amber, anchor: "middle" }) : "";
+    return drawLargeValue(temperature, available ? "°C" : "", palette, font) + note;
+  }
+  const condition = weatherCondition(value?.weatherCode, value?.isDay);
+  const header = text("ВОЛГОГРАД", 6, 12,
+    { size: fittingSize("ВОЛГОГРАД", FONT, 8.4, 52), fill: CATEGORIES.weather });
+  const reading = available ? temperature + "°" : temperature;
+  const size = fittingSize(reading, font, settings.digitSize ?? (theme === "large" ? 30 : 27), condition.icon ? 35 : 52);
+  const details = value?.stale ? "Нет обновления" : available ? condition.text : "Нет данных";
+  const description = text(details, 6, 50, { size: fittingSize(details, FONT, 8.3, 52),
+    fill: value?.stale ? SIGNAL.amber : palette.secondary });
+  const feelsLike = Number.isFinite(value?.feelsLike) && !value.stale ? "Ощущ. " + temperatureLabel(value.feelsLike) + "°" : "";
+  const foot = feelsLike ? text(feelsLike, 6, 60, { size: 7.3, fill: palette.secondary }) : "";
+  return header + text(reading, 5.5, 38, { size, font, fill: palette.primary }) +
+    drawWeatherIcon(condition.icon, CATEGORIES.weather) + description + foot;
 }
 
 function drawBitwarden() {
@@ -553,6 +605,8 @@ function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, 
   else if (metric === "diskActivity") content = drawRates(value, history, preferences, focus, true);
   else if (metric === "networkSpeed") content = drawRates(value, history, preferences, focus);
   else if (metric === "topProcess") content = drawTopProcess(value, preferences, focus);
+  else if (metric === "topGpu") content = drawTopProcess(value, preferences, focus, "gpu");
+  else if (metric === "weather") content = drawWeather(value, preferences, focus);
   else if (metric === "bitwarden") content = drawBitwarden();
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
   const xlink = flag || metric === "bitwarden" ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";
