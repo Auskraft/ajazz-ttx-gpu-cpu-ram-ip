@@ -12,19 +12,42 @@ const { CameraControl } = require('./camera-control.cjs');
 const { openBitwarden } = require('./bitwarden-launch.cjs');
 const { hardwareMetricIds, metricForAction, normalize } = require('./settings.js');
 
-const numericMetrics = [...hardwareMetricIds, 'gpuHotspot'];
-const gameMetrics = new Set(['microphone', 'network', 'disk']);
+const numericMetrics = [...hardwareMetricIds.filter((metric) => metric !== 'fanSpeed'), 'gpuHotspot'];
+const gameMetrics = new Set(['microphone', 'network', 'disk', 'diskActivity', 'networkSpeed', 'topProcess']);
 const historyLength = 30;
 const tickInterval = 1000;
 const audioPollInterval = 2000;
 const cameraPollInterval = 5000;
 const animationFrameInterval = 125;
 const animationFrameCount = 16;
-const deviceRequests = { audioOutput: 'audioOutputs', camera: 'cameras', fps: 'fpsApps' };
+const deviceRequests = {
+  audioOutput: 'audioOutputs', camera: 'cameras', fps: 'fpsApps', fanSpeed: 'fanSources', networkSpeed: 'networkAdapters'
+};
+
+function selectedFan({ fanSource }, fans) {
+  if (!Array.isArray(fans)) return null;
+  if (fanSource !== 'auto') return fans.find(({ id }) => id === fanSource) ?? null;
+  const readable = fans.filter(({ reading }) => Number.isFinite(reading));
+  return readable.find(({ name }) => /cpu|processor|процессор/i.test(name)) ??
+    readable.find(({ id }) => id === 'gpu') ?? readable[0] ?? null;
+}
+
+function recordHistory(entry, source, value, sample) {
+  if (source !== entry.historySource) {
+    entry.historySource = source;
+    entry.history.length = 0;
+  }
+  if (source && sample) {
+    entry.history.push(value);
+    if (entry.history.length > historyLength) entry.history.shift();
+  }
+  return entry.history;
+}
 
 function animateStatus(metric, value) {
   return (metric === 'microphone' && value?.muted === false) ||
-    (metric === 'camera' && value?.enabled === true && !value.switching);
+    (metric === 'camera' && value?.enabled === true && !value.switching) ||
+    (metric === 'fps' && value?.status === 'ready' && Number.isFinite(value.fps) && value.fps > 0);
 }
 
 function selectedCamera(settings, devices) {
@@ -113,7 +136,7 @@ function startPlugin({ port, uuid, registerEvent }) {
     void resolveAddress(entry, request, withCountry);
   }
 
-  function paint(entry, now = Date.now()) {
+  function paint(entry, now = Date.now(), sample = false) {
     const { context, settings, focus } = entry;
     const metric = entry.metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot'
       ? 'gpuHotspot' : entry.metric;
@@ -134,9 +157,24 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (metric === 'camera') {
       value = cameraValue(entry);
       status = value.enabled === null && !value.selectionRequired ? 'unavailable' : 'ready';
+    } else if (metric === 'fanSpeed') {
+      const fan = selectedFan(settings, snapshot.fans);
+      const reading = Number.isFinite(fan?.reading) ? fan.reading : null;
+      value = fan ? { reading, unit: fan.unit, name: fan.name } : null;
+      status = reading === null ? 'unavailable' : 'ready';
+      const source = reading === null ? null : JSON.stringify([fan.id, fan.unit]);
+      history = recordHistory(entry, source, reading, sample);
     } else if (gameMetrics.has(metric)) {
       value = game?.value(metric, settings) ?? null;
       history = value?.history ?? [];
+      if (metric === 'diskActivity' || metric === 'networkSpeed') {
+        const available = metric === 'diskActivity'
+          ? [value?.readBytesPerSecond, value?.writeBytesPerSecond, value?.activePercent].some(Number.isFinite)
+          : [value?.receiveBytesPerSecond, value?.sendBytesPerSecond].some(Number.isFinite);
+        const source = available ? (value.letter ?? value.adapterId) : null;
+        status = available ? 'ready' : 'unavailable';
+        history = recordHistory(entry, source, value, sample);
+      }
     }
     const image = renderTile({
       metric,
@@ -158,6 +196,7 @@ function startPlugin({ port, uuid, registerEvent }) {
 
   function isAnimating(entry) {
     if (entry.metric === 'microphone') return animateStatus(entry.metric, game?.value(entry.metric, entry.settings));
+    if (entry.metric === 'fps') return animateStatus(entry.metric, fpsSnapshot[entry.settings.fpsProcess]);
     return entry.metric === 'camera' && animateStatus(entry.metric, cameraValue(entry));
   }
 
@@ -220,6 +259,11 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (entry.metric === 'fps') {
       const apps = await listFpsApps().catch(() => null);
       devices = apps?.map((name) => ({ id: name, name }));
+    } else if (entry.metric === 'networkSpeed') {
+      devices = await game?.networkAdapters();
+    } else if (entry.metric === 'fanSpeed') {
+      const fans = telemetry?.snapshot().fans;
+      devices = Array.isArray(fans) ? fans.map(({ id, name, unit }) => ({ id, name: name + ' (' + unit + ')' })) : null;
     } else {
       devices = (await readAudioOutputs())?.devices;
     }
@@ -340,7 +384,8 @@ function startPlugin({ port, uuid, registerEvent }) {
 
   function update(now = Date.now(), sample = true) {
     if (telemetry) {
-      snapshot = telemetry.snapshot();
+      const readings = telemetry.snapshot();
+      snapshot = { ...readings, gpuPower: readings.gpuPowerW ?? null };
       if (sample) {
         for (const metric of numericMetrics) {
           const history = histories[metric];
@@ -358,7 +403,7 @@ function startPlugin({ port, uuid, registerEvent }) {
     if (cameraControl && !cameraSwitch && now >= cameraNextCheck) void readCameras();
     for (const entry of onscreen.values()) {
       if (entry.metric === 'ip') refreshAddress(entry, now);
-      paint(entry, now);
+      paint(entry, now, sample);
     }
     syncAnimation();
   }
@@ -396,6 +441,10 @@ function startPlugin({ port, uuid, registerEvent }) {
       const needsHotspot = actions.some(({ metric, settings }) =>
         metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot');
       telemetry.setGpuHotspotEnabled(needsHotspot);
+      telemetry.setAdditionalSensors({
+        gpuPower: actions.some(({ metric }) => metric === 'gpuPower'),
+        fanSpeed: actions.some(({ metric }) => metric === 'fanSpeed')
+      });
       if (!needsHotspot) histories.gpuHotspot.length = 0;
     }
     if (actions.some(({ metric }) => gameMetrics.has(metric))) {
@@ -480,6 +529,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       onscreen.set(context, {
         context, device, metric, settings: normalize(payload?.settings),
         focus: onscreen.get(context)?.focus ?? false,
+        history: [], historySource: null,
         ipNextCheck: 0, gettingIp: null, ipValue: null, ipCountry: null, showFlag: false, ipStatus: 'loading',
         lastImage: null
       });

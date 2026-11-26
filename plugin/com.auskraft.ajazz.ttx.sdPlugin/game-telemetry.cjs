@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const { isIP } = require('node:net');
 const path = require('node:path');
 const readline = require('node:readline');
+const { normalizeNetworkAdapterId } = require('./settings.js');
 
 const helper = path.join(__dirname, 'game-sensor', 'GameSensor.exe');
 const defaultTarget = '1.1.1.1';
@@ -21,8 +22,10 @@ function letterFor(settings) {
   return /^[A-Z]:?$/.test(value) ? value[0] : 'C';
 }
 
-function makeChannel(args, onLine, onLost) {
-  const maxSilence = args[0] === 'disk' ? 20000 : 10000;
+function makeChannel(args, onLine, onLost, initialCommand) {
+  const systemStream = args[0] === 'system';
+  const maxSilence = args[0] === 'disk' || systemStream ? 20000 : 10000;
+  const maxLineSize = systemStream ? 128 * 1024 : 8192;
   let worker = null;
   let retry = null;
   let watchdog = null;
@@ -42,7 +45,7 @@ function makeChannel(args, onLine, onLost) {
     watch();
     const lines = readline.createInterface({ input: child.stdout });
     lines.on('line', (line) => {
-      if (closed || worker !== child || line.length > 8192) return;
+      if (closed || worker !== child || line.length > maxLineSize) return;
       let reading;
       try {
         reading = JSON.parse(line);
@@ -63,6 +66,7 @@ function makeChannel(args, onLine, onLost) {
         retry.unref();
       }
     });
+    if (initialCommand) child.stdin.write(initialCommand() + '\n');
   }
   start();
 
@@ -86,12 +90,37 @@ function makeChannel(args, onLine, onLost) {
   };
 }
 
+function nonnegative(value) {
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function percent(value) {
+  const reading = nonnegative(value);
+  return reading === null ? null : Math.min(100, reading);
+}
+
+function topProcess(reading, field, normalizeValue) {
+  if (typeof reading?.name !== 'string' || !reading.name.trim()) return null;
+  const value = normalizeValue(reading[field]);
+  if (value === null) return null;
+  const pid = Number.isSafeInteger(reading.pid) && reading.pid > 0 ? reading.pid : null;
+  return { name: reading.name, pid, [field]: value };
+}
+
 function createGameTelemetry(onMicrophoneReading) {
   let micChannel = null;
   let diskChannel = null;
   let mic = null;
   let volumes = new Map();
   const network = new Map();
+  let systemChannel = null;
+  let systemDemand = new Set();
+  let diskActivity = new Map();
+  let interfaces = null;
+  let defaultInterfaceId = '';
+  let topCpu = null;
+  let topRam = null;
+  const adapterWaiters = new Set();
 
   function setMic(reading) {
     if (reading?.db === mic?.db && reading?.muted === mic?.muted) return;
@@ -115,6 +144,111 @@ function createGameTelemetry(onMicrophoneReading) {
       ['SSD', 'HDD', 'ДИСК'].includes(disk.type) &&
       Number.isFinite(disk.usedGb) && Number.isFinite(disk.totalGb) && Number.isFinite(disk.freePct)
     ).map((disk) => [disk.letter, disk]));
+  }
+
+  function availableAdapters() {
+    return interfaces?.map(({ id, name }) => ({ id, name })) ?? null;
+  }
+
+  function resolveAdapterWaiters(adapters) {
+    for (const complete of adapterWaiters) complete(adapters);
+  }
+
+  function clearSystem() {
+    diskActivity.clear();
+    interfaces = null;
+    defaultInterfaceId = '';
+    topCpu = null;
+    topRam = null;
+    resolveAdapterWaiters(null);
+  }
+
+  function readSystem(reading) {
+    if (!reading || typeof reading !== 'object') return;
+    if (systemDemand.has('disk')) {
+      diskActivity = new Map((Array.isArray(reading.disks) ? reading.disks : [])
+        .filter((disk) => /^[A-Z]$/.test(disk?.letter))
+        .map((disk) => [disk.letter, {
+          letter: disk.letter,
+          readBytesPerSecond: nonnegative(disk.readBytesPerSecond),
+          writeBytesPerSecond: nonnegative(disk.writeBytesPerSecond),
+          activePercent: percent(disk.activePercent)
+        }]));
+    }
+    if (systemDemand.has('network') && Array.isArray(reading.interfaces)) {
+      interfaces = reading.interfaces.filter((adapter) =>
+        normalizeNetworkAdapterId(adapter?.id) && typeof adapter.name === 'string' && adapter.name.trim()
+      ).map((adapter) => ({
+        id: adapter.id,
+        name: adapter.name,
+        receiveBytesPerSecond: nonnegative(adapter.receiveBytesPerSecond),
+        sendBytesPerSecond: nonnegative(adapter.sendBytesPerSecond)
+      }));
+      defaultInterfaceId = normalizeNetworkAdapterId(reading.defaultInterfaceId);
+      resolveAdapterWaiters(availableAdapters());
+    }
+    if (systemDemand.has('process-cpu')) topCpu = topProcess(reading.topCpu, 'cpuPercent', percent);
+    if (systemDemand.has('process-ram')) topRam = topProcess(reading.topRam, 'memoryBytes', nonnegative);
+  }
+
+  function networkAdapters() {
+    if (interfaces) return Promise.resolve(availableAdapters());
+    if (!systemDemand.has('network')) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const complete = (adapters) => {
+        clearTimeout(deadline);
+        adapterWaiters.delete(complete);
+        resolve(adapters);
+      };
+      const deadline = setTimeout(() => complete(null), 5000);
+      deadline.unref?.();
+      adapterWaiters.add(complete);
+    });
+  }
+
+  function networkSpeed(settings) {
+    if (!interfaces) return null;
+    const id = settings.networkAdapterId || defaultInterfaceId;
+    const active = interfaces.filter(({ receiveBytesPerSecond, sendBytesPerSecond }) =>
+      receiveBytesPerSecond !== null || sendBytesPerSecond !== null);
+    const adapter = id ? interfaces.find(({ id: current }) => current === id) : active.length === 1 ? active[0] : null;
+    if (!adapter) return null;
+    return {
+      adapterId: adapter.id,
+      adapterName: adapter.name,
+      receiveBytesPerSecond: adapter.receiveBytesPerSecond,
+      sendBytesPerSecond: adapter.sendBytesPerSecond
+    };
+  }
+
+  function syncSystem(actions) {
+    const next = new Set();
+    if (actions.some(({ metric }) => metric === 'diskActivity')) next.add('disk');
+    if (actions.some(({ metric }) => metric === 'networkSpeed')) next.add('network');
+    const processModes = actions.filter(({ metric }) => metric === 'topProcess')
+      .map(({ settings }) => settings.topProcessMode === 'ram' ? 'process-ram' : 'process-cpu');
+    for (const mode of processModes.sort()) next.add(mode);
+    if (next.size === systemDemand.size && [...next].every((family) => systemDemand.has(family))) return;
+    systemDemand = next;
+
+    if (!next.size) {
+      systemChannel?.close();
+      systemChannel = null;
+      clearSystem();
+      return;
+    }
+    if (!next.has('disk')) diskActivity.clear();
+    if (!next.has('network')) {
+      interfaces = null;
+      defaultInterfaceId = '';
+      resolveAdapterWaiters(null);
+    }
+    if (!next.has('process-cpu')) topCpu = null;
+    if (!next.has('process-ram')) topRam = null;
+
+    const command = () => 'watch ' + [...systemDemand].join(' ');
+    if (systemChannel) systemChannel.write(command());
+    else systemChannel = makeChannel(['system'], readSystem, clearSystem, command);
   }
 
   function startNetwork(target) {
@@ -142,6 +276,7 @@ function createGameTelemetry(onMicrophoneReading) {
 
   function sync(actions) {
     const visible = [...actions];
+    syncSystem(visible);
     const micVisible = visible.some(({ metric }) => metric === 'microphone');
     const diskVisible = visible.some(({ metric }) => metric === 'disk');
     const targets = new Set(visible.filter(({ metric }) => metric === 'network').map(({ settings }) => targetFor(settings)));
@@ -173,8 +308,12 @@ function createGameTelemetry(onMicrophoneReading) {
       if (metric === 'microphone') return mic;
       if (metric === 'disk') return volumes.get(letterFor(settings)) ?? null;
       if (metric === 'network') return networkValue(targetFor(settings));
+      if (metric === 'diskActivity') return diskActivity.get(letterFor(settings)) ?? null;
+      if (metric === 'networkSpeed') return networkSpeed(settings);
+      if (metric === 'topProcess') return settings.topProcessMode === 'ram' ? topRam : topCpu;
       return null;
     },
+    networkAdapters,
     toggleMicrophone() {
       return mic !== null && (micChannel?.write('toggle') ?? false);
     },

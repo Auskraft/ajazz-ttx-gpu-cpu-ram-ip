@@ -1,15 +1,16 @@
 using System;
-using System.Globalization;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Web.Script.Serialization;
 using LibreHardwareMonitor.Hardware;
 
 internal static class CpuSensor
 {
-    private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private const int SampleIntervalMs = 2000;
+    private static readonly JavaScriptSerializer Serializer = new JavaScriptSerializer();
 
     private static int Main(string[] args)
     {
@@ -17,7 +18,8 @@ internal static class CpuSensor
         {
             using (var sensor = new TemperatureSensor())
             {
-                Console.WriteLine(SampleJson(sensor.Read()));
+                Console.OutputEncoding = new UTF8Encoding(false);
+                Console.WriteLine(sensor.ReadJson());
                 return 0;
             }
         }
@@ -38,7 +40,7 @@ internal static class CpuSensor
             {
                 while (true)
                 {
-                    Publish(snapshotPath, SampleJson(sensor.Read()));
+                    Publish(snapshotPath, sensor.ReadJson());
                     Thread.Sleep(SampleIntervalMs);
                 }
             }
@@ -53,13 +55,6 @@ internal static class CpuSensor
             Console.Error.WriteLine("The sensor task cannot update its local readings.");
             return 4;
         }
-    }
-
-    private static string SampleJson(float? temperature)
-    {
-        string value = temperature.HasValue ? temperature.Value.ToString("0.0", Invariant) : "null";
-        long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return "{\"cpuTemperature\":" + value + ",\"timestamp\":" + timestamp.ToString(Invariant) + "}";
     }
 
     private static void Publish(string destination, string json)
@@ -86,8 +81,20 @@ internal static class CpuSensor
 
         private Computer computer;
         private DateTime nextTry = DateTime.MinValue;
+        private DateTime nextFanTry = DateTime.MinValue;
 
-        public float? Read()
+        public string ReadJson()
+        {
+            float? temperature = ReadTemperature();
+            return Serializer.Serialize(new
+            {
+                cpuTemperature = temperature,
+                fans = ReadFans(),
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        }
+
+        private float? ReadTemperature()
         {
             try
             {
@@ -122,6 +129,40 @@ internal static class CpuSensor
             }
 
             return null;
+        }
+
+        private List<object> ReadFans()
+        {
+            var fans = new List<object>();
+            if (computer == null || DateTime.UtcNow < nextFanTry)
+                return fans;
+
+            try
+            {
+                if (!computer.IsMotherboardEnabled)
+                    computer.IsMotherboardEnabled = true;
+                foreach (IHardware board in computer.Hardware.Where(h => h.HardwareType == HardwareType.Motherboard))
+                    AddFans(board, fans);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("Motherboard fans unavailable ({0}).", ex.GetType().Name);
+                nextFanTry = DateTime.UtcNow.AddSeconds(30);
+            }
+            return fans;
+        }
+
+        private static void AddFans(IHardware hardware, List<object> fans)
+        {
+            hardware.Update();
+            foreach (ISensor sensor in hardware.Sensors.Where(item => item.SensorType == SensorType.Fan))
+            {
+                float? rpm = sensor.Value;
+                if (rpm.HasValue && rpm.Value >= 0 && !float.IsInfinity(rpm.Value))
+                    fans.Add(new { id = sensor.Identifier.ToString(), name = sensor.Name, reading = rpm.Value, unit = "rpm" });
+            }
+            foreach (IHardware child in hardware.SubHardware)
+                AddFans(child, fans);
         }
 
         public void Dispose()

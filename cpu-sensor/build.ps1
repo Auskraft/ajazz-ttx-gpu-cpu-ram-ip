@@ -40,5 +40,5 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $lhmAssembly = Join-Path $Destination 'LibreHardwareMonitorLib.dll'
 $output = Join-Path $Destination 'CpuSensor.exe'
 $source = Join-Path $PSScriptRoot 'CpuSensor.cs'
-& $compiler /nologo /target:exe /platform:x64 /optimize+ "/out:$output" "/reference:$lhmAssembly" $source
+& $compiler /nologo /target:exe /platform:x64 /optimize+ /reference:System.Web.Extensions.dll "/out:$output" "/reference:$lhmAssembly" $source
 if ($LASTEXITCODE -ne 0) { throw "Failed to compile CPU sensor ($LASTEXITCODE)." }

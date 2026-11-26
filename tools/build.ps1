@@ -47,6 +47,13 @@ Copy-Item -LiteralPath (Join-Path $cpuSource 'cpu-temperature.cjs') -Destination
 & (Join-Path $root 'gpu-sensor/build.ps1') -SensorDist $sensorDist -Destination (Join-Path $pluginStage 'gpu-sensor')
 & (Join-Path $root 'game-sensor/build.ps1') -Destination (Join-Path $pluginStage 'game-sensor')
 & (Join-Path $root 'fps-sensor/build.ps1') -Destination (Join-Path $pluginStage 'fps-sensor')
+$fpsStage = Join-Path $pluginStage 'fps-sensor'
+$payloadFps = Join-Path $payload 'fps'
+New-Item -Path $payloadFps -ItemType Directory -Force | Out-Null
+Move-Item -LiteralPath (Join-Path $fpsStage 'FpsCapture.exe') -Destination $payloadFps
+foreach ($file in 'PresentMon.exe','LICENSE-PresentMon.txt') {
+    Copy-Item -LiteralPath (Join-Path $fpsStage $file) -Destination $payloadFps
+}
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $pluginStage
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $pluginStage
 Copy-Item -Path (Join-Path $sensorDist '*') -Destination $payloadCpu -Recurse

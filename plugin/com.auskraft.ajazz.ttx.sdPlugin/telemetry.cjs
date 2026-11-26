@@ -61,14 +61,18 @@ function numericField(text) {
 
 function parseGpuSample(line) {
   const fields = line.split(",");
-  if (fields.length !== 2) return null;
+  if (fields.length !== 4) return null;
   const load = numericField(fields[0]);
   const temperature = numericField(fields[1]);
-  if (load === null && temperature === null) return null;
+  const power = numericField(fields[2]);
+  const fan = numericField(fields[3]);
+  if (load === null && temperature === null && power === null && fan === null) return null;
 
   return {
     gpuLoad: load !== null && load >= 0 && load <= 100 ? load : null,
     gpuTemperature: temperature,
+    gpuPowerW: power !== null && power >= 0 ? power : null,
+    gpuFanPercent: fan !== null && fan >= 0 ? fan : null,
   };
 }
 
@@ -109,10 +113,11 @@ function createStreamingMonitor(executable, args, parseSample) {
     if (closed || process.platform !== "win32") return;
 
     const now = Date.now();
-    if (processState) {
-      if (now - processState.lastUpdate < GPU_TIMEOUT_MS) return;
-      processState.child.kill();
-      end(processState);
+    const state = processState;
+    if (state) {
+      if (now - state.lastUpdate < GPU_TIMEOUT_MS) return;
+      end(state);
+      state.child.kill();
     }
 
     if (now >= nextLaunchTime) start(now);
@@ -125,9 +130,10 @@ function createStreamingMonitor(executable, args, parseSample) {
     },
     close() {
       closed = true;
-      if (processState) {
-        processState.child.kill();
-        end(processState);
+      const state = processState;
+      if (state) {
+        end(state);
+        state.child.kill();
       }
     },
   };
@@ -136,18 +142,25 @@ function createStreamingMonitor(executable, args, parseSample) {
 function createGpuMonitor() {
   return createStreamingMonitor(nvidiaSmiExecutable(), [
     "--id=0",
-    "--query-gpu=utilization.gpu,temperature.gpu",
+    "--query-gpu=utilization.gpu,temperature.gpu,power.draw,fan.speed",
     "--format=csv,noheader,nounits",
     "--loop-ms=" + SAMPLE_INTERVAL_MS,
   ], parseGpuSample);
 }
 
-function createGpuHotspotMonitor() {
+function createGpuHardwareMonitor() {
   const executable = path.join(__dirname, "gpu-sensor", "GpuHotspot.exe");
   if (!existsSync(executable)) return null;
-  return createStreamingMonitor(executable, [], (line) => {
-    const value = numericField(line);
-    return { gpuHotspot: value !== null && value > 0 && value <= 150 ? value : null };
+  return createStreamingMonitor(executable, ["--telemetry"], (line) => {
+    try {
+      const { gpuHotspot, gpuFanRpm } = JSON.parse(line);
+      return {
+        gpuHotspot: Number.isFinite(gpuHotspot) && gpuHotspot > 0 && gpuHotspot <= 150 ? gpuHotspot : null,
+        gpuFanRpm: Number.isFinite(gpuFanRpm) && gpuFanRpm >= 0 ? gpuFanRpm : null,
+      };
+    } catch {
+      return null;
+    }
   });
 }
 
@@ -160,7 +173,10 @@ function createCpuTemperatureMonitor() {
 function createTelemetry() {
   const gpu = createGpuMonitor();
   const cpuTemperature = createCpuTemperatureMonitor();
-  let gpuHotspot = null;
+  let gpuHardware = null;
+  let hotspotEnabled = false;
+  let gpuPowerEnabled = false;
+  let fansEnabled = false;
   let previousCpuTimes = cpuTimes();
   let cpuLoad = null;
   let memory = memoryUsage();
@@ -171,7 +187,19 @@ function createTelemetry() {
     previousCpuTimes = currentCpuTimes;
     memory = memoryUsage();
     gpu.refresh();
-    gpuHotspot?.refresh();
+    gpuHardware?.refresh();
+  }
+
+  function syncGpuHardware() {
+    if (hotspotEnabled || fansEnabled) {
+      if (!gpuHardware) {
+        gpuHardware = createGpuHardwareMonitor();
+        gpuHardware?.refresh();
+      }
+    } else if (gpuHardware) {
+      gpuHardware.close();
+      gpuHardware = null;
+    }
   }
 
   gpu.refresh();
@@ -179,29 +207,38 @@ function createTelemetry() {
 
   return {
     setGpuHotspotEnabled(enabled) {
-      if (enabled && !gpuHotspot) {
-        gpuHotspot = createGpuHotspotMonitor();
-        gpuHotspot?.refresh();
-      } else if (!enabled && gpuHotspot) {
-        gpuHotspot.close();
-        gpuHotspot = null;
-      }
+      hotspotEnabled = enabled;
+      syncGpuHardware();
+    },
+    setAdditionalSensors({ gpuPower, fanSpeed }) {
+      gpuPowerEnabled = gpuPower;
+      fansEnabled = fanSpeed;
+      syncGpuHardware();
     },
     snapshot() {
       const gpuSample = gpu.snapshot();
+      const hardwareSample = gpuHardware?.snapshot();
+      const fans = fansEnabled ? [...(cpuTemperature?.fanSnapshot?.() ?? [])] : [];
+      if (fansEnabled) {
+        const rpm = hardwareSample?.gpuFanRpm;
+        const reading = rpm ?? gpuSample?.gpuFanPercent ?? null;
+        if (reading !== null) fans.unshift({ id: "gpu", name: "GPU", reading, unit: rpm == null ? "%" : "rpm" });
+      }
       return {
         cpuLoad,
         cpuTemperature: cpuTemperature?.snapshot() ?? null,
         gpuLoad: gpuSample?.gpuLoad ?? null,
         gpuTemperature: gpuSample?.gpuTemperature ?? null,
-        gpuHotspot: gpuHotspot?.snapshot()?.gpuHotspot ?? null,
+        gpuHotspot: hotspotEnabled ? hardwareSample?.gpuHotspot ?? null : null,
+        gpuPowerW: gpuPowerEnabled ? gpuSample?.gpuPowerW ?? null : null,
+        fans,
         ...memory,
       };
     },
     close() {
       clearInterval(interval);
       gpu.close();
-      gpuHotspot?.close();
+      gpuHardware?.close();
       cpuTemperature?.close();
     },
   };

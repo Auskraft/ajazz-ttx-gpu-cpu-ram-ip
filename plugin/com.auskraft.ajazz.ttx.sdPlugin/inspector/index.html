@@ -63,6 +63,14 @@
         <option value="">Авто по теме</option>
       </select>
     </label>
+    <label class="field" id="indicator-size-field" hidden>
+      <span>Размер красного индикатора</span>
+      <select id="indicator-size">
+        <option value="small">Маленький</option>
+        <option value="medium">Средний</option>
+        <option value="large">Большой</option>
+      </select>
+    </label>
     <label class="check" id="traffic-section" hidden>
       <input type="checkbox" id="traffic" checked>
       <span>Плавный светофор</span>
@@ -118,7 +126,7 @@
         <p role="status" id="fps-apps-status" hidden></p>
         <button id="refresh-fps-apps" type="button">Обновить приложения</button>
       </div>
-      <small>Если кнопка показывает «Доступ к FPS», добавь свою учётную запись в группу Windows «Пользователи журналов производительности», затем выйди из системы и войди снова.</small>
+      <small>Если кнопка показывает «Доступ к FPS», запусти AJAZZ-TTX-Setup.exe и выбери «Да» для установки захвата FPS по запросу. Можно также использовать уже доступный захват Windows.</small>
     </div>
     <label class="field" id="ping-target-field" hidden>
       <span>Адрес для пинга</span>
@@ -127,6 +135,29 @@
     <label class="field" id="volume-letter-field" hidden>
       <span>Буква тома в Windows</span>
       <select id="volume-letter"></select>
+    </label>
+    <div id="fan-settings" class="device-settings" hidden>
+      <label class="field">
+        <span>Датчик вентилятора</span>
+        <select id="fan-source" aria-describedby="fan-status"></select>
+      </label>
+      <p role="status" id="fan-status" hidden></p>
+      <button id="refresh-fan-sources" type="button">Обновить список</button>
+    </div>
+    <div id="network-speed-settings" class="device-settings" hidden>
+      <label class="field">
+        <span>Сетевой адаптер</span>
+        <select id="network-adapter" aria-describedby="network-speed-status"></select>
+      </label>
+      <p role="status" id="network-speed-status" hidden></p>
+      <button id="refresh-network-adapters" type="button">Обновить список</button>
+    </div>
+    <label class="field" id="top-process-mode-field" hidden>
+      <span>Сортировать процессы по</span>
+      <select id="top-process-mode">
+        <option value="cpu">Нагрузке на CPU</option>
+        <option value="ram">Использованию ОЗУ</option>
+      </select>
     </label>
     <div id="audio-settings" class="device-settings" hidden>
       <label class="field">

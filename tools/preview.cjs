@@ -6,6 +6,7 @@ const { renderSvg } = require("../plugin/com.auskraft.ajazz.ttx.sdPlugin/render.
 
 const metrics = ["cpuTemperature", "gpuTemperature", "ramUsedGb", "cpuLoad", "gpuLoad", "ip"];
 const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden", "audioOutput", "camera"];
+const systemMetrics = ["gpuPower", "fanSpeed", "diskActivity", "networkSpeed", "topProcess"];
 const themes = {
   bars: "Пиксельные столбики",
   lines: "Тонкие линии",
@@ -26,16 +27,25 @@ const example = {
   disk: [{ letter: "C", type: "SSD", usedGb: 286, totalGb: 447, freePct: 36 }, []],
   bitwarden: [null, []],
   audioOutput: [{ name: "Наушники", slot: 1, configured: true, volumePercent: 62 }, []],
-  camera: [{ name: "Logitech C922", enabled: true }, []]
+  camera: [{ name: "Logitech C922", enabled: true }, []],
+  gpuPower: [87, [49, 53, 69, 71, 88, 95, 92, 84, 83, 90, 87]],
+  fanSpeed: [{ name: "GPU", reading: 1795, unit: "rpm" }, [895, 935, 1190, 1294, 1547, 1580, 1725, 1750, 1788, 1795]],
+  diskActivity: [{ letter: "C", readBytesPerSecond: 124500000, writeBytesPerSecond: 8200000, activePercent: 47 },
+    [4, 21, 48, 27, 35, 49, 76, 132, 126, 124].map((rate) => ({ readBytesPerSecond: rate * 1e6, writeBytesPerSecond: 8e6 }))],
+  networkSpeed: [{ receiveBytesPerSecond: 10525000, sendBytesPerSecond: 310000 },
+    [18, 24, 37, 51, 81, 90, 79, 68, 91, 84].map((rate) => ({ receiveBytesPerSecond: rate * 125000, sendBytesPerSecond: 310000 }))],
+  topProcess: [{ name: "Korabli64", cpuPercent: 28.4 }, []]
 };
 
 function tile(metric, theme, focus = false, extra = {}, suffix = "") {
   const [exampleValue, history] = example[metric];
   const value = focus && metric === "cpuLoad" ? 18 : exampleValue;
   const key = (focus ? "focus-" + metric : theme + "-" + metric) + suffix;
+  const { settings, ...overrides } = extra;
   return renderSvg({
-    metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15, audioShowVolume: true },
-    snapshot: { ramTotalGb: 32 }, ...extra
+    metric, value, history, focus, status: metric === "fps" ? "ready" : undefined,
+    settings: { theme, traffic: true, ipSeconds: 15, audioShowVolume: true, ...settings },
+    snapshot: { ramTotalGb: 32 }, ...overrides
   }).replaceAll('id="face"', `id="face-${key}"`)
     .replaceAll("#face)", `#face-${key})`)
     .replaceAll('id="history"', `id="history-${key}"`)
@@ -56,7 +66,7 @@ function html(body, style) {
 const target = process.argv[2];
 if (!target) throw new Error("Pass a temporary preview directory.");
 fs.mkdirSync(target, { recursive: true });
-const sheet = [logo, logo, ...[...metrics, ...gameMetrics].map((metric) => tile(metric, "bars"))];
+const sheet = [logo, logo, ...[...metrics, ...gameMetrics, ...systemMetrics].map((metric) => tile(metric, "bars"))];
 fs.writeFileSync(path.join(target, "icons.html"), html("<main>" + sheet.join("") + "</main>",
   "html,body{margin:0}main{display:grid;grid-template-columns:repeat(4,128px);width:512px}svg{display:block;width:128px;height:128px}"));
 
@@ -66,6 +76,13 @@ const gamingVariants = Object.entries(themes).map(([theme, name]) => {
   const tiles = gameMetrics.slice(0, 4).map((metric) => tile(metric, theme));
   const audio = theme === "lines" ? { name: "Динамики", slot: 2, configured: true, volumePercent: 45 } : example.audioOutput[0];
   tiles.push(tile("audioOutput", theme, false, { value: audio }), tile("bitwarden", theme));
+  return `<section><h2>${name}</h2><div class="device">${tiles.join("")}</div></section>`;
+});
+const systemVariants = Object.entries(themes).map(([theme, name]) => {
+  const tiles = systemMetrics.map((metric) => tile(metric, theme));
+  tiles.push(tile("topProcess", theme, false, {
+    value: { name: "Korabli64", memoryBytes: 3070901617 }, settings: { topProcessMode: "ram" }
+  }, "-ram"));
   return `<section><h2>${name}</h2><div class="device">${tiles.join("")}</div></section>`;
 });
 fs.writeFileSync(path.join(target, "themes.html"), html(`
@@ -86,10 +103,11 @@ fs.writeFileSync(path.join(target, "themes.html"), html(`
   .gradient:before{content:"";display:inline-block;width:58px;height:5px;margin-right:10px;vertical-align:middle;border-radius:999px;background:linear-gradient(90deg,#65f17c,#ffde57,#ff5363)}
 `));
 
-fs.writeFileSync(path.join(target, "game-themes.html"), html(`
+function widgetGallery(title, panels) {
+  return html(`
   <main>
-    <header><div><p>AJAZZ AKP03R</p><h1>Игровые и системные кнопки</h1></div><span>Демонстрационные данные</span></header>
-    <div class="themes">${gamingVariants.join("")}</div>
+    <header><div><p>AJAZZ AKP03R</p><h1>${title}</h1></div><span>Демонстрационные данные</span></header>
+    <div class="themes">${panels.join("")}</div>
   </main>`, `
   *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
   main{padding:32px 40px;width:1390px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:27px}
@@ -98,15 +116,18 @@ fs.writeFileSync(path.join(target, "game-themes.html"), html(`
   .themes{display:grid;grid-template-columns:repeat(5,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
   .device{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid #424b5b;border-radius:17px;background:#252d39;box-shadow:0 7px 14px #03070c66}
   svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
-`));
+`);
+}
+fs.writeFileSync(path.join(target, "game-themes.html"), widgetGallery("Игровые и системные кнопки", gamingVariants));
+fs.writeFileSync(path.join(target, "system-telemetry.html"), widgetGallery("Расширенный мониторинг", systemVariants));
 
 fs.writeFileSync(path.join(target, "camera-microphone.html"), html(`
   <main>
     <header><h1>Камера и микрофон</h1><span>Демонстрационные данные</span></header>
     <div class="device">
-      ${tile("camera", "ice")}
+      ${tile("camera", "ice", false, { settings: { indicatorSize: "small" } })}
       ${tile("camera", "ice", false, { value: { name: "Logitech C922", enabled: false } }, "-off")}
-      ${tile("microphone", "amber")}
+      ${tile("microphone", "amber", false, { settings: { indicatorSize: "large" } })}
       ${tile("microphone", "amber", false, { value: { muted: true } }, "-off")}
     </div>
   </main>`, `

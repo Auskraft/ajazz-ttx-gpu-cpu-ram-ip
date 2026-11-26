@@ -39,3 +39,8 @@ $foregroundSource = Join-Path $PSScriptRoot 'ForegroundProcess.cs'
 $foregroundBinary = Join-Path $Destination 'ForegroundProcess.exe'
 & $compiler /nologo /target:exe /platform:x64 /optimize+ "/out:$foregroundBinary" $foregroundSource
 if ($LASTEXITCODE -ne 0) { throw "Foreground process helper compilation failed ($LASTEXITCODE)." }
+
+$captureSource = Join-Path $PSScriptRoot 'FpsCapture.cs'
+$captureBinary = Join-Path $Destination 'FpsCapture.exe'
+& $compiler /nologo /target:exe /platform:x64 /optimize+ "/out:$captureBinary" $captureSource
+if ($LASTEXITCODE -ne 0) { throw "FPS capture helper compilation failed ($LASTEXITCODE)." }

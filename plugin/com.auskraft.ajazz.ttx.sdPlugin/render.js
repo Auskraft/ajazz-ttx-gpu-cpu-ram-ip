@@ -11,10 +11,11 @@ const MONO = "Consolas,monospace";
 const CATEGORIES = {
   cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa",
   fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879", audio: "#87e2d5",
-  camera: "#aebaff"
+  camera: "#aebaff", fans: "#8ce6d5"
 };
 const SIGNAL = { green: "#79ef87", amber: "#ffcd69", red: "#ff6777" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
+const INDICATOR_RADII = { small: 1.5, medium: 2.3, large: 3.4 };
 const flags = new Map();
 let bitwardenMark;
 const THEMES = {
@@ -92,10 +93,10 @@ function normalize(metric, value, totalMemory) {
   return clamp(value / 100, 0, 1);
 }
 
-function drawGraph(metric, history, { theme, totalMemory, traffic, top }) {
+function drawGraph(metric, history, { theme, totalMemory, traffic, top, bottom = GRAPH.bottom }) {
   const palette = THEMES[theme];
   const color = CATEGORIES[metric.group];
-  const { left, right, bottom } = GRAPH;
+  const { left, right } = GRAPH;
   const width = right - left;
   const colorFor = (value) => traffic && metric.limits ? trafficColor(value, metric.limits) : color;
   const values = history.filter(Number.isFinite).slice(-30);
@@ -269,10 +270,10 @@ function gameValue(value, unit, theme, settings, { baseline, preferred, color })
     (unit ? text(unit, 58, baseline - 1, { size: 7.5, fill: palette.secondary, anchor: "end" }) : "");
 }
 
-function gameGraph(group, measurements, theme, top, maximum) {
+function gameGraph(group, measurements, theme, top, maximum, bottom) {
   const scale = (sample) => Number.isFinite(sample) ? clamp(sample / maximum, 0, 1) * 100 : 0;
   return drawGraph({ group, unit: "%" }, measurements.map(scale), {
-    theme, totalMemory: null, traffic: false, top
+    theme, totalMemory: null, traffic: false, top, bottom
   });
 }
 
@@ -280,19 +281,24 @@ function decimal(value) {
   return value.toFixed(1).replace(".", ",");
 }
 
-function drawFps(value, history, settings, focus, status) {
+function drawFps(value, history, settings, focus, status, animationPhase) {
   const { theme } = settings;
   const palette = THEMES[theme];
   const fps = Number.isFinite(value?.fps) ? Math.round(value.fps) : "—";
   if (focus) return drawLargeValue(fps, fps === "—" ? "" : "FPS", palette, numberFont(theme));
-  const header = gameHeader("FPS", CATEGORIES.fps, theme);
+  const live = fps !== "—" && status === "ready";
+  const header = gameHeader("FPS", CATEGORIES.fps, theme, live ? null : CATEGORIES.fps);
+  const phase = Math.floor((animationPhase || 0) / 2) % 4;
+  const pulse = live ? [0, 1, 2, 3].map((index) =>
+    rect(45 + 3.5 * index, 7, 2.5, 3, CATEGORIES.fps, [1, 0.63, 0.3, 0.14][(phase - index + 4) % 4])
+  ).join("") : "";
   const amount = gameValue(fps, "", theme, settings, { baseline: theme === "large" ? 36 : 33, preferred: theme === "large" ? 28 : 24 });
   const frame = Number.isFinite(value?.frameMs) ? decimal(value.frameMs) + " мс" : "";
   const note = frame || (status === "permission" ? "Доступ к FPS" :
     settings.fpsProcess === "auto" ? "Нет кадров" : "Ожидание игры");
   const detail = text(note, 6, 44, { size: 7.6, fill: status === "permission" ? SIGNAL.amber : palette.secondary });
   const samples = history.map((sample) => Number.isFinite(sample) ? sample : sample?.frameMs);
-  return header + amount + detail + gameGraph("fps", samples, theme, 47, 24);
+  return header + pulse + amount + detail + gameGraph("fps", samples, theme, 47, 24);
 }
 
 function meterColor(level) {
@@ -301,11 +307,12 @@ function meterColor(level) {
   return SIGNAL.green;
 }
 
-function deviceHeader(label, color, enabled, animationPhase) {
+function deviceHeader(label, color, enabled, animationPhase, indicatorSize) {
   const phase = Number.isFinite(animationPhase) ? animationPhase : 0;
   const opacity = (0.7 + 0.3 * Math.cos(phase * 2 * Math.PI / 16)).toFixed(2);
+  const radius = Object.hasOwn(INDICATOR_RADII, indicatorSize) ? INDICATOR_RADII[indicatorSize] : INDICATOR_RADII.medium;
   const marker = enabled
-    ? `<circle cx="57" cy="8.8" r="3.8" fill="${SIGNAL.red}" opacity="${(Number(opacity) * 0.23).toFixed(2)}"/><circle cx="57" cy="8.8" r="2.3" fill="${SIGNAL.red}" opacity="${opacity}"/>`
+    ? `<circle cx="57" cy="8.8" r="${(radius + 1.3).toFixed(1)}" fill="${SIGNAL.red}" opacity="${(Number(opacity) * 0.23).toFixed(2)}"/><circle cx="57" cy="8.8" r="${radius}" fill="${SIGNAL.red}" opacity="${opacity}"/>`
     : "";
   return text(label, 6, 12, { size: fittingSize(label, FONT, 8.1, 45), fill: color }) + marker;
 }
@@ -317,7 +324,7 @@ function drawMicrophone(value, settings, animationPhase) {
   const db = Number.isFinite(value?.db) ? clamp(value.db, -60, 0) : null;
   const signal = !muted && db !== null;
   const color = muted ? SIGNAL.red : CATEGORIES.mic;
-  const header = deviceHeader("МИКРОФОН", color, value?.muted === false, animationPhase);
+  const header = deviceHeader("МИКРОФОН", color, value?.muted === false, animationPhase, settings.indicatorSize);
   const level = muted ? "ВЫКЛ" : value ? (db === null ? "−∞" : String(Math.round(db)).replace("-", "−")) : "—";
   const readout = gameValue(level, "", theme, settings, {
     baseline: 37, preferred: muted ? 17 : theme === "large" ? 28 : 24, color: muted ? SIGNAL.red : palette.primary
@@ -418,12 +425,12 @@ function drawCamera(value, settings, animationPhase) {
   const enabled = value?.enabled === true;
   const disabled = value?.enabled === false;
   const switching = value?.switching === true;
-  const header = deviceHeader("КАМЕРА", CATEGORIES.camera, enabled && !switching, animationPhase);
-  const reading = switching ? "…" : enabled ? "ВКЛ" : disabled ? "ВЫКЛ" : "—";
+  const header = deviceHeader("КАМЕРА", CATEGORIES.camera, enabled && !switching, animationPhase, settings.indicatorSize);
+  const reading = switching ? "…" : enabled ? "Live" : disabled ? "Off" : "—";
   const displayName = (value?.name || "").split(/\s+/).slice(0, 2).join(" ").slice(0, 22);
   const detail = switching ? "Запрос Windows" : value?.selectionRequired ? "Выбери камеру" :
     (!enabled && !disabled ? "Недоступна" : displayName);
-  const color = disabled ? palette.secondary : palette.primary;
+  const color = switching ? palette.primary : enabled ? SIGNAL.red : disabled ? SIGNAL.green : palette.primary;
   const readout = gameValue(reading, "", theme, settings, {
     baseline: 37, preferred: theme === "large" ? 28 : 23, color
   });
@@ -431,6 +438,87 @@ function drawCamera(value, settings, animationPhase) {
     size: fittingSize(detail, FONT, 8.6, 52), fill: switching ? SIGNAL.amber : palette.secondary
   });
   return header + readout + subtitle;
+}
+
+function shortName(name, limit) {
+  const characters = Array.from(typeof name === "string" ? name : "");
+  return characters.length > limit ? characters.slice(0, limit - 1).join("") + "…" : characters.join("");
+}
+
+function drawSensor(title, group, reading, unit, detail, maximum, history, settings, focus) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const shown = Number.isFinite(reading) ? Math.round(reading) : "—";
+  if (focus) return drawLargeValue(shown, shown === "—" ? "" : unit, palette, numberFont(theme));
+  const header = gameHeader(title, CATEGORIES[group], theme, null) +
+    text(unit, 58, 12, { size: 7.5, fill: palette.secondary, anchor: "end" });
+  const amount = gameValue(shown, "", theme, settings, {
+    baseline: 35, preferred: theme === "large" ? 28 : 24
+  });
+  const label = detail || (shown === "—" ? "Нет датчика" : "");
+  const note = label ? text(label, 6, 44, { size: fittingSize(label, FONT, 7.6, 52), fill: palette.secondary }) : "";
+  const samples = history.filter(Number.isFinite);
+  return header + amount + note + gameGraph(group, samples, theme, 47, Math.max(maximum, reading || 0, ...samples));
+}
+
+function rateText(bytesPerSecond, scale) {
+  if (!Number.isFinite(bytesPerSecond)) return "—";
+  const rate = Math.max(0, bytesPerSecond) * scale;
+  const digits = rate < 1 ? 2 : rate < 100 ? 1 : 0;
+  return String(Number(rate.toFixed(digits))).replace(".", ",");
+}
+
+function drawRates(value, history, settings, focus, disk = false) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const group = disk ? "ssd" : "network";
+  const accent = CATEGORIES[group];
+  const keys = disk ? ["readBytesPerSecond", "writeBytesPerSecond"] : ["receiveBytesPerSecond", "sendBytesPerSecond"];
+  const labels = disk ? ["Чтение", "Запись"] : ["↓", "↑"];
+  const units = disk ? "МБ/с" : "Мбит/с";
+  const scale = disk ? 1e-6 : 8e-6;
+  const active = disk && Number.isFinite(value?.activePercent) ? Math.round(clamp(value.activePercent, 0, 100)) + "%" : "";
+  const title = disk ? "ДИСК " + (value?.letter || settings.volumeLetter || "C") + ":" : "ТРАФИК";
+  const header = focus ? "" : gameHeader(title, accent, theme, active ? null : accent) +
+    (active ? text(active, 58, 12, { font: MONO, size: 7.6, fill: palette.primary, anchor: "end" }) : "");
+  const rows = keys.map((key, index) => {
+    const label = labels[index];
+    const amount = rateText(value?.[key], scale);
+    const font = numberFont(theme);
+    const y = (focus ? 24 : 28) + (focus ? 24 : 17) * index;
+    const labelSize = disk ? 7.4 : 11;
+    const reserved = Math.ceil(widthEm(label, FONT) * labelSize) + 4;
+    const preferred = settings.digitSize ?? (theme === "large" ? 19 : 17);
+    const size = fittingSize(amount, font, focus ? 25 : Math.min(preferred, 23), 52 - reserved);
+    return text(label, 6, y - 1, { size: labelSize, fill: accent }) +
+      text(amount, 58, y, { font, size, fill: palette.primary, anchor: "end" });
+  }).join("");
+  const note = text(units, 58, 62, { size: 6.3, fill: palette.secondary, anchor: "end" });
+  if (focus) return rows + note;
+  const samples = history.filter((item) => keys.every((key) => Number.isFinite(item?.[key])))
+    .map((item) => (item[keys[0]] + item[keys[1]]) * scale);
+  const graph = gameGraph(group, samples, theme, 49, Math.max(1, ...samples), 54);
+  return header + rows + graph + note;
+}
+
+function drawTopProcess(value, settings, focus) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const memory = settings.topProcessMode === "ram";
+  const group = memory ? "ram" : "cpu";
+  const reading = memory ? value?.memoryBytes : value?.cpuPercent;
+  const available = Number.isFinite(reading);
+  const gigabytes = memory && reading >= 1073741824;
+  const unit = !available ? "" : memory ? gigabytes ? "ГиБ" : "МиБ" : "%";
+  let amount = "—";
+  if (available) amount = memory ? gigabytes ? decimal(reading / 1073741824) :
+    String(Math.round(reading / 1048576)) : decimal(reading);
+  if (focus) return drawLargeValue(amount, unit, palette, numberFont(theme));
+  const header = gameHeader(memory ? "ТОП RAM" : "ТОП CPU", CATEGORIES[group], theme);
+  const primary = gameValue(amount, unit, theme, settings, { baseline: 35, preferred: theme === "large" ? 28 : 24 });
+  const name = shortName(value?.name, 15) || "Нет данных";
+  const subtitle = text(name, 6, 50, { size: fittingSize(name, FONT, 9.5, 52), fill: palette.secondary });
+  return header + primary + subtitle;
 }
 
 function drawBitwarden() {
@@ -453,12 +541,18 @@ function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, 
   let content = "";
   if (flag) content = drawFlag(flag, preferences.ipProgress === true) + drawIpProgress(preferences, palette, focus, ipSecondsRemaining);
   else if (metric === "ip") content = drawIp(value, preferences, palette, focus, ipSecondsRemaining);
-  else if (metric === "fps") content = drawFps(value, history, preferences, focus, status);
+  else if (metric === "fps") content = drawFps(value, history, preferences, focus, status, animationPhase);
   else if (metric === "microphone") content = drawMicrophone(value, preferences, animationPhase);
   else if (metric === "network") content = drawNetwork(value, preferences, focus);
   else if (metric === "disk") content = drawDisk(value, preferences, focus);
   else if (metric === "audioOutput") content = drawAudioOutput(value, preferences, status);
   else if (metric === "camera") content = drawCamera(value, preferences, animationPhase);
+  else if (metric === "gpuPower") content = drawSensor("GPU", "gpu", value, "Вт", "", 125, history, preferences, focus);
+  else if (metric === "fanSpeed") content = drawSensor("ВЕНТ.", "fans", value?.reading,
+    value?.unit === "%" ? "%" : "об/мин", shortName(value?.name, 17), value?.unit === "%" ? 100 : 1400, history, preferences, focus);
+  else if (metric === "diskActivity") content = drawRates(value, history, preferences, focus, true);
+  else if (metric === "networkSpeed") content = drawRates(value, history, preferences, focus);
+  else if (metric === "topProcess") content = drawTopProcess(value, preferences, focus);
   else if (metric === "bitwarden") content = drawBitwarden();
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
   const xlink = flag || metric === "bitwarden" ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";

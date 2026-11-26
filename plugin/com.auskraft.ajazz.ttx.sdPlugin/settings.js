@@ -2,8 +2,11 @@
   'use strict';
 
   const prefix = 'com.auskraft.ajazz.ttx.';
-  const hardwareMetricIds = ['cpuTemperature', 'gpuTemperature', 'ramUsedGb', 'cpuLoad', 'gpuLoad'];
-  const metricIds = [...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput', 'camera'];
+  const hardwareMetricIds = ['cpuTemperature', 'gpuTemperature', 'ramUsedGb', 'cpuLoad', 'gpuLoad', 'gpuPower', 'fanSpeed'];
+  const metricIds = [
+    ...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput', 'camera',
+    'diskActivity', 'networkSpeed', 'topProcess'
+  ];
   const themes = ['bars', 'lines', 'large', 'amber', 'ice'];
   const digitSizeRange = Object.freeze({ min: 12, max: 30 });
 
@@ -75,6 +78,10 @@
       audioShowVolume: source.audioShowVolume === true,
       cameraId: normalizeDeviceId(source.cameraId),
       bitwardenPath: normalizeBitwardenPath(source.bitwardenPath),
+      fanSource: normalizeDeviceId(source.fanSource) || 'auto',
+      networkAdapterId: normalizeDeviceId(source.networkAdapterId),
+      topProcessMode: source.topProcessMode === 'ram' ? 'ram' : 'cpu',
+      indicatorSize: ['small', 'medium', 'large'].includes(source.indicatorSize) ? source.indicatorSize : 'medium',
       volumeLetter: typeof source.volumeLetter === 'string' && /^[a-z]:?$/i.test(source.volumeLetter.trim())
         ? source.volumeLetter.trim()[0].toUpperCase() : 'C'
     };
@@ -82,7 +89,9 @@
 
   const api = {
     metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess, normalizeFpsExecutable,
-    normalizeAudioOutputId: normalizeDeviceId, normalizeCameraId: normalizeDeviceId, normalizeBitwardenPath, digitSizeRange
+    normalizeAudioOutputId: normalizeDeviceId, normalizeCameraId: normalizeDeviceId,
+    normalizeFanSourceId: normalizeDeviceId, normalizeNetworkAdapterId: normalizeDeviceId,
+    normalizeBitwardenPath, digitSizeRange
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.AjazzSettings = api;

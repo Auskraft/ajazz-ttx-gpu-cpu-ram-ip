@@ -3,6 +3,7 @@
 const { execFile, spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { existsSync } = require("node:fs");
+const { createConnection } = require("node:net");
 const { join } = require("node:path");
 const { createInterface } = require("node:readline");
 const { normalizeFpsProcess } = require("./settings.js");
@@ -13,7 +14,10 @@ const autoTarget = "auto";
 const frameWindowMs = 1200;
 const maxFramesPerChain = 1800;
 const retryMs = 5000;
-const permissionRetryMs = 30000;
+const brokerPipe = "\\\\.\\pipe\\Auskraft-Ajazz-TTX-Fps-v1";
+const brokerTask = "Auskraft Ajazz TTX FPS Sensor";
+const brokerWaitMs = 9000;
+const brokerPollMs = 200;
 const shipProcesses = ["korabli.exe", "korabli64.exe"];
 
 function processNames(target) {
@@ -47,6 +51,9 @@ function createFpsMonitor() {
   let closed = false;
   let status = "unavailable";
   let retry = null;
+  let useBroker = false;
+  let brokerBlocked = false;
+  let earlyBrokerDisconnects = 0;
 
   function clearRetry() {
     if (retry) clearTimeout(retry);
@@ -120,8 +127,111 @@ function createFpsMonitor() {
     while (frames.length > maxFramesPerChain || frames[0].at < now - frameWindowMs) frames.shift();
   }
 
+  function readCapture(input, capture) {
+    const lines = createInterface({ input, crlfDelay: Infinity });
+    capture.lines = lines;
+    lines.on("line", (line) => {
+      if (active === capture && !capture.stopping && line.length <= 8192) collectFrame(line, capture);
+    });
+  }
+
+  function retryCapture() {
+    retry = setTimeout(() => {
+      retry = null;
+      start();
+    }, retryMs);
+    retry.unref();
+  }
+
+  function closeBroker(capture) {
+    if (active === capture) active = null;
+    clearTimeout(capture.wait);
+    clearTimeout(capture.poll);
+    capture.task?.kill();
+    capture.lines?.close();
+    capture.socket?.destroy();
+  }
+
+  function startBroker() {
+    if (brokerBlocked) return;
+    const capture = { kind: "broker", connected: false, taskRequested: false };
+    active = capture;
+
+    function fail() {
+      if (active !== capture) return;
+      closeBroker(capture);
+      brokerBlocked = true;
+      status = "permission";
+    }
+
+    function poll() {
+      capture.poll = setTimeout(dial, brokerPollMs);
+      capture.poll.unref();
+    }
+
+    function launchTask() {
+      capture.taskRequested = true;
+      const taskHost = join(process.env.SystemRoot || "C:\\Windows", "System32", "schtasks.exe");
+      const options = { windowsHide: true, timeout: 2500, maxBuffer: 64 * 1024 };
+      capture.task = execFile(taskHost, ["/Query", "/TN", brokerTask], options, (error) => {
+        if (active !== capture) return;
+        capture.task = null;
+        if (error) {
+          fail();
+          return;
+        }
+        capture.task = execFile(taskHost, ["/Run", "/TN", brokerTask], options, () => {
+          if (active !== capture) return;
+          capture.task = null;
+          // An existing task instance may already be starting the pipe.
+          poll();
+        });
+      });
+    }
+
+    function dial() {
+      if (active !== capture) return;
+      const socket = createConnection(brokerPipe);
+      capture.socket = socket;
+      socket.once("error", () => {});
+      socket.once("connect", () => {
+        if (active !== capture) return;
+        capture.connected = true;
+        clearTimeout(capture.wait);
+        status = "unavailable";
+        readCapture(socket, capture);
+      });
+      socket.once("close", () => {
+        if (active !== capture) return;
+        if (!capture.connected) {
+          if (capture.taskRequested) poll();
+          else launchTask();
+          return;
+        }
+        chains.clear();
+        if (capture.schema) earlyBrokerDisconnects = 0;
+        else earlyBrokerDisconnects++;
+        if (earlyBrokerDisconnects > 1) fail();
+        else {
+          closeBroker(capture);
+          retryCapture();
+        }
+      });
+    }
+
+    capture.wait = setTimeout(fail, brokerWaitMs);
+    capture.wait.unref();
+    dial();
+  }
+
   function start() {
-    if (closed || !targets.length || active || retry || process.platform !== "win32" || !existsSync(presentMonPath)) return;
+    if (closed || !targets.length || active || retry || process.platform !== "win32") return;
+    if (useBroker) {
+      status = "permission";
+      startBroker();
+      return;
+    }
+    if (!existsSync(presentMonPath)) return;
 
     const processArgs = targets.includes(autoTarget) ? [] :
       [...capturedProcesses].flatMap((name) => ["--process_name", name]);
@@ -136,17 +246,17 @@ function createFpsMonitor() {
       "--no_track_gpu",
       ...processArgs
     ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    const capture = { child, lines, schema: null, stderr: "", stopping: false, stopTimer: null };
+    const capture = { kind: "direct", child, schema: null, stderr: "", stopping: false, stopTimer: null, denied: false };
     active = capture;
 
-    lines.on("line", (line) => {
-      if (active === capture && !capture.stopping) collectFrame(line, capture);
-    });
+    readCapture(child.stdout, capture);
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
       capture.stderr = (capture.stderr + chunk).slice(-4096);
-      if (/failed to start trace session:\s*access denied/i.test(capture.stderr)) status = "permission";
+      if (active === capture && /failed to start trace session:\s*access denied/i.test(capture.stderr)) {
+        capture.denied = true;
+        status = "permission";
+      }
     });
 
     child.on("error", () => {});
@@ -159,13 +269,12 @@ function createFpsMonitor() {
       if (closed || !targets.length) return;
       if (capture.stopping) {
         start();
+      } else if (capture.denied) {
+        useBroker = true;
+        start();
       } else {
-        retry = setTimeout(() => {
-          retry = null;
-          status = "unavailable";
-          start();
-        }, status === "permission" ? permissionRetryMs : retryMs);
-        retry.unref();
+        status = "unavailable";
+        retryCapture();
       }
     });
   }
@@ -173,6 +282,10 @@ function createFpsMonitor() {
   function stop() {
     if (!active || active.stopping) return;
     const capture = active;
+    if (capture.kind === "broker") {
+      closeBroker(capture);
+      return;
+    }
     capture.stopping = true;
     const terminate = spawn(presentMonPath, ["--session_name", sessionName, "--terminate_existing_session"], {
       windowsHide: true,
@@ -189,7 +302,7 @@ function createFpsMonitor() {
     setTargets(names) {
       if (closed) return;
       const requested = [...new Set(names.map(normalizeFpsProcess))].sort();
-      if (requested.join(",") === targets.join(",")) return;
+      if (requested.length === targets.length && requested.every((name, index) => name === targets[index])) return;
       const previousAuto = targets.includes(autoTarget);
       const automatic = requested.includes(autoTarget);
       targets = requested;
@@ -197,13 +310,19 @@ function createFpsMonitor() {
       const sameExplicitTargets = requestedProcesses.size === capturedProcesses.size &&
         [...requestedProcesses].every((executable) => capturedProcesses.has(executable));
       capturedProcesses = requestedProcesses;
+      if (!targets.length) {
+        chains.clear();
+        clearRetry();
+        stopForeground();
+        stop();
+        return;
+      }
       if (automatic) {
         monitorForeground();
-        if (previousAuto) return;
       } else {
         stopForeground();
-        if (!previousAuto && sameExplicitTargets) return;
       }
+      if (active?.kind === "broker" || (automatic ? previousAuto : !previousAuto && sameExplicitTargets)) return;
       chains.clear();
       status = "unavailable";
       clearRetry();

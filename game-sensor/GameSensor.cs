@@ -25,6 +25,7 @@ internal static class GameSensor
         Console.OutputEncoding = new UTF8Encoding(false);
         if (args[0] == "output") return RunAudioOutput(args);
         if (args[0] == "camera") return RunCamera(args);
+        if (args[0] == "system") return SystemTelemetry.Run(args, Emit);
         if (!once)
         {
             var commands = new Thread(ReadCommands) { IsBackground = true };

@@ -13,25 +13,29 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("AJAZZ TTX Setup")]
 [assembly: AssemblyDescription("AJAZZ Stream Dock monitor setup")]
 [assembly: AssemblyCompany("Auskraft")]
-[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
 
 internal static class Setup
 {
     private const string Product = "AJAZZ ТТХ";
     private const string TaskName = "Auskraft Ajazz TTX CPU Sensor";
+    private const string FpsTaskName = "Auskraft Ajazz TTX FPS Sensor";
     private const string DriverHash = "1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032";
     private const string PluginFile = "com.auskraft.ajazz.ttx.sdPlugin";
     private const string SensorExe = "CpuSensor.exe";
     private const string SensorData = "cpu-temperature.json";
+    private const string FpsCaptureExe = "FpsCapture.exe";
+    private const string PresentMonExe = "PresentMon.exe";
+    private const string FpsSessionName = "Auskraft-Ajazz-FPS-Broker";
 
     [STAThread]
     private static int Main(string[] args)
     {
         try
         {
-            if (args.Length == 1 && args[0] == "--install-cpu")
+            if (args.Length == 2 && args[0] == "--install-sensors")
             {
-                InstallCpu();
+                InstallSensors(new SecurityIdentifier(args[1]));
                 return 0;
             }
 
@@ -43,12 +47,12 @@ internal static class Setup
             }
 
             var choice = MessageBox.Show(
-                "Да — установить плагин и датчик температуры CPU. Windows запросит права администратора для установки подписанного драйвера PawnIO и фонового датчика.\n\n" +
-                "Нет — установить плагин без датчика температуры CPU.\n\nОтмена — выйти.",
+                "Да — установить плагин, фоновый датчик CPU и вентиляторов платы, а также захват FPS по запросу кнопки. Windows попросит подтвердить установку.\n\n" +
+                "Нет — установить только плагин.\n\nОтмена — выйти.",
                 Product, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
             if (choice == DialogResult.Cancel) return 0;
 
-            if (choice == DialogResult.Yes && !StartCpuSetup()) return 1;
+            if (choice == DialogResult.Yes && !StartSensorSetup()) return 1;
             ImportPlugin();
             return 0;
         }
@@ -67,12 +71,15 @@ internal static class Setup
         }
     }
 
-    private static bool StartCpuSetup()
+    private static bool StartSensorSetup()
     {
+        string userSid;
+        using (var identity = WindowsIdentity.GetCurrent())
+            userSid = identity.User.Value;
         using (var setup = Process.Start(new ProcessStartInfo
         {
             FileName = Assembly.GetExecutingAssembly().Location,
-            Arguments = "--install-cpu",
+            Arguments = "--install-sensors " + userSid,
             Verb = "runas",
             UseShellExecute = true
         }))
@@ -132,10 +139,10 @@ internal static class Setup
         }
     }
 
-    private static void InstallCpu()
+    private static void InstallSensors(SecurityIdentifier userSid)
     {
         if (!Environment.Is64BitOperatingSystem || Environment.OSVersion.Platform != PlatformID.Win32NT)
-            throw new PlatformNotSupportedException("Датчик температуры рассчитан на 64-битную Windows.");
+            throw new PlatformNotSupportedException("Фоновые датчики рассчитаны на 64-битную Windows.");
 
         var prefix = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Auskraft");
         RejectReparsePoint(prefix);
@@ -143,6 +150,8 @@ internal static class Setup
         RejectReparsePoint(folder);
         Directory.CreateDirectory(folder);
         ProtectSensorFolder(folder);
+        var presentMon = Path.Combine(folder, PresentMonExe);
+        bool replacingFpsSensor = File.Exists(presentMon);
 
         dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));
         service.Connect();
@@ -150,7 +159,8 @@ internal static class Setup
         using (var package = OpenPackage())
         {
             InstallDriver(package, folder);
-            StopExistingTask(tasks);
+            StopExistingTask(tasks, TaskName);
+            StopExistingTask(tasks, FpsTaskName);
             foreach (var entry in package.Entries)
             {
                 if (!entry.FullName.StartsWith("cpu/", StringComparison.Ordinal)) continue;
@@ -159,7 +169,11 @@ internal static class Setup
                     continue;
                 WriteEntry(entry, Path.Combine(folder, name));
             }
+            Extract(package, "fps/" + FpsCaptureExe, Path.Combine(folder, FpsCaptureExe));
+            Extract(package, "fps/" + PresentMonExe, presentMon);
+            Extract(package, "fps/LICENSE-PresentMon.txt", Path.Combine(folder, "LICENSE-PresentMon.txt"));
         }
+        if (replacingFpsSensor) StopFpsTrace(presentMon, folder);
 
         var exe = Path.Combine(folder, SensorExe);
         var data = Path.Combine(folder, SensorData);
@@ -167,6 +181,22 @@ internal static class Setup
         RejectReparsePoint(data);
         if (!File.Exists(exe)) throw new IOException("Датчик CPU отсутствует в установочном архиве.");
         RegisterTask(service, tasks, exe, data, folder);
+        RegisterFpsTask(service, tasks, folder, userSid);
+    }
+
+    private static void StopFpsTrace(string executable, string folder)
+    {
+        using (var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = executable,
+            Arguments = "--session_name " + FpsSessionName + " --terminate_existing_session --no_csv --no_console_stats",
+            WorkingDirectory = folder,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }))
+        {
+            if (!process.WaitForExit(3000)) process.Kill();
+        }
     }
 
     private static void ProtectSensorFolder(string folder)
@@ -220,11 +250,11 @@ internal static class Setup
         }
     }
 
-    private static void StopExistingTask(dynamic folder)
+    private static void StopExistingTask(dynamic folder, string taskName)
     {
         foreach (dynamic task in folder.GetTasks(0))
         {
-            if (task.Name != TaskName) continue;
+            if (task.Name != taskName) continue;
             if ((int)task.State != 2 && (int)task.State != 4) return;
             task.Stop(0);
             for (int attempt = 0; attempt < 30 && (int)task.State == 4; attempt++)
@@ -237,7 +267,7 @@ internal static class Setup
     private static void RegisterTask(dynamic service, dynamic folder, string exe, string data, string working)
     {
         dynamic definition = service.NewTask(0);
-        definition.RegistrationInfo.Description = "Reads the CPU package temperature for AJAZZ TTX.";
+        definition.RegistrationInfo.Description = "Reads CPU temperature and motherboard fan speed for AJAZZ TTX.";
         definition.Principal.UserId = "SYSTEM";
         definition.Principal.LogonType = 5;
         definition.Principal.RunLevel = 1;
@@ -255,5 +285,25 @@ internal static class Setup
         action.WorkingDirectory = working;
         dynamic task = folder.RegisterTaskDefinition(TaskName, definition, 6, "SYSTEM", null, 5, null);
         task.Run(null);
+    }
+
+    private static void RegisterFpsTask(dynamic service, dynamic folder, string working, SecurityIdentifier userSid)
+    {
+        dynamic definition = service.NewTask(0);
+        definition.RegistrationInfo.Description = "Streams frame timing to AJAZZ TTX on demand.";
+        definition.Principal.UserId = "SYSTEM";
+        definition.Principal.LogonType = 5;
+        definition.Principal.RunLevel = 1;
+        definition.Settings.AllowDemandStart = true;
+        definition.Settings.ExecutionTimeLimit = "PT0S";
+        definition.Settings.MultipleInstances = 1;
+        definition.Settings.DisallowStartIfOnBatteries = false;
+        definition.Settings.StopIfGoingOnBatteries = false;
+        dynamic action = definition.Actions.Create(0);
+        action.Path = Path.Combine(working, FpsCaptureExe);
+        action.Arguments = "--user-sid " + userSid.Value;
+        action.WorkingDirectory = working;
+        string descriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;" + userSid.Value + ")";
+        folder.RegisterTaskDefinition(FpsTaskName, definition, 6, "SYSTEM", null, 5, descriptor);
     }
 }

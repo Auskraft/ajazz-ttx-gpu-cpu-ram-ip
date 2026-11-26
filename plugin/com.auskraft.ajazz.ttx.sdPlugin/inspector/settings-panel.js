@@ -6,6 +6,8 @@ const themeField = document.getElementById('theme-field');
 const digitSize = document.getElementById('digit-size');
 const digitSizeField = document.getElementById('digit-size-field');
 const digitSizeLabel = document.getElementById('digit-size-label');
+const indicatorSize = document.getElementById('indicator-size');
+const indicatorSizeField = document.getElementById('indicator-size-field');
 const traffic = document.getElementById('traffic');
 const trafficSection = document.getElementById('traffic-section');
 const gpuSensor = document.getElementById('gpu-sensor');
@@ -29,6 +31,16 @@ const pingTarget = document.getElementById('ping-target');
 const pingTargetField = document.getElementById('ping-target-field');
 const volumeLetter = document.getElementById('volume-letter');
 const volumeLetterField = document.getElementById('volume-letter-field');
+const fanSettings = document.getElementById('fan-settings');
+const fanSource = document.getElementById('fan-source');
+const fanStatus = document.getElementById('fan-status');
+const refreshFanSources = document.getElementById('refresh-fan-sources');
+const networkSpeedSettings = document.getElementById('network-speed-settings');
+const networkAdapter = document.getElementById('network-adapter');
+const networkSpeedStatus = document.getElementById('network-speed-status');
+const refreshNetworkAdapters = document.getElementById('refresh-network-adapters');
+const topProcessMode = document.getElementById('top-process-mode');
+const topProcessModeField = document.getElementById('top-process-mode-field');
 const audioSettings = document.getElementById('audio-settings');
 const audioOutputA = document.getElementById('audio-output-a');
 const audioOutputB = document.getElementById('audio-output-b');
@@ -45,14 +57,21 @@ const bitwardenPathHint = document.getElementById('bitwarden-path-hint');
 const connection = document.getElementById('connection');
 const {
   metricForAction, supportsTraffic, normalize, normalizeAudioOutputId, normalizeCameraId, normalizeFpsExecutable,
-  normalizeBitwardenPath, digitSizeRange
+  normalizeBitwardenPath, normalizeFanSourceId, normalizeNetworkAdapterId, digitSizeRange
 } = globalThis.AjazzSettings;
 const devicePickers = {
   audioOutput: {
     request: 'audioOutputs', button: refreshAudioOutputs, normalizeId: normalizeAudioOutputId, update: updateAudioFields
   },
   camera: { request: 'cameras', button: refreshCameras, normalizeId: normalizeCameraId, update: updateCameraFields },
-  fps: { request: 'fpsApps', button: refreshFpsApps, normalizeId: normalizeFpsExecutable, update: updateFpsApps }
+  fps: { request: 'fpsApps', button: refreshFpsApps, normalizeId: normalizeFpsExecutable, update: updateFpsApps },
+  fanSpeed: {
+    request: 'fanSources', button: refreshFanSources, normalizeId: normalizeFanSourceId, update: updateFanSources
+  },
+  networkSpeed: {
+    request: 'networkAdapters', button: refreshNetworkAdapters,
+    normalizeId: normalizeNetworkAdapterId, update: updateNetworkAdapters
+  }
 };
 
 let socket;
@@ -164,10 +183,37 @@ function updateCameraFields() {
   }
 }
 
+function updateSourceChoice(select, selected, defaultOption, status, emptyHint) {
+  const devices = deviceReading?.devices ?? [];
+  const missing = selected !== defaultOption.value && !devices.some(({ id }) => id === selected);
+  select.replaceChildren(defaultOption);
+  for (const { id, name } of devices) select.add(new Option(name, id));
+  if (missing) select.add(new Option('Сохранённый источник недоступен', selected));
+  select.value = selected;
+  const text = deviceRequestId ? 'Обновляю список…' :
+    !deviceReading?.available || devices.length === 0 ? emptyHint :
+    missing ? 'Для этой кнопки можно выбрать другой источник.' : '';
+  status.textContent = text;
+  status.hidden = !text;
+}
+
+function updateFanSources() {
+  refreshFanSources.disabled = Boolean(deviceRequestId);
+  updateSourceChoice(fanSource, settings.fanSource, new Option('Авто (CPU, затем GPU)', 'auto'), fanStatus,
+    'Датчики вентилятора не найдены. Попробуй обновить список.');
+}
+
+function updateNetworkAdapters() {
+  refreshNetworkAdapters.disabled = Boolean(deviceRequestId);
+  updateSourceChoice(networkAdapter, settings.networkAdapterId, new Option('Авто (основное подключение)', ''),
+    networkSpeedStatus, 'Не удалось получить список сетевых адаптеров.');
+}
+
 function populate(incoming) {
   settings = normalize(incoming);
   theme.value = settings.theme;
   digitSize.value = settings.digitSize === null ? '' : String(settings.digitSize);
+  indicatorSize.value = settings.indicatorSize;
   traffic.checked = settings.traffic;
   gpuSensor.value = settings.gpuSensor;
   ipMode.value = settings.ipMode;
@@ -180,6 +226,7 @@ function populate(incoming) {
   }
   pingTarget.value = settings.pingTarget;
   volumeLetter.value = settings.volumeLetter;
+  topProcessMode.value = settings.topProcessMode;
   audioShowVolume.checked = settings.audioShowVolume;
   if (!bitwardenDraft) bitwardenPath.value = settings.bitwardenPath;
   updateIpFields(settings);
@@ -189,7 +236,8 @@ function populate(incoming) {
 }
 
 for (const input of [
-  theme, digitSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress, fpsMode, fpsProcess, pingTarget, volumeLetter,
+  theme, digitSize, indicatorSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress, fpsMode, fpsProcess,
+  pingTarget, volumeLetter, fanSource, networkAdapter, topProcessMode,
   audioOutputA, audioOutputB, audioShowVolume, cameraDevice, bitwardenPath
 ]) {
   input.addEventListener('change', () => {
@@ -226,8 +274,12 @@ for (const input of [
       ipSeconds: ipSeconds.value,
       ipProgress: ipProgress.checked,
       digitSize: digitSize.value,
+      indicatorSize: indicatorSize.value,
       pingTarget: pingTarget.value,
       volumeLetter: volumeLetter.value,
+      fanSource: fanSettings.hidden ? settings.fanSource : fanSource.value,
+      networkAdapterId: networkSpeedSettings.hidden ? settings.networkAdapterId : networkAdapter.value,
+      topProcessMode: topProcessMode.value,
       audioShowVolume: audioShowVolume.checked,
       audioOutputA: audioSettings.hidden ? settings.audioOutputA : audioOutputA.value,
       audioOutputB: audioSettings.hidden ? settings.audioOutputB : audioOutputB.value,
@@ -272,9 +324,13 @@ globalThis.connectElgatoStreamDeckSocket = (port, uuid, event, application, acti
   themeField.hidden = metric === 'bitwarden';
   digitSizeField.hidden = metric === 'bitwarden' || metric === 'audioOutput';
   digitSizeLabel.textContent = metric === 'camera' ? 'Размер текста' : 'Размер цифр';
+  indicatorSizeField.hidden = metric !== 'camera' && metric !== 'microphone';
   fpsSettings.hidden = metric !== 'fps';
   pingTargetField.hidden = metric !== 'network';
-  volumeLetterField.hidden = metric !== 'disk';
+  volumeLetterField.hidden = metric !== 'disk' && metric !== 'diskActivity';
+  fanSettings.hidden = metric !== 'fanSpeed';
+  networkSpeedSettings.hidden = metric !== 'networkSpeed';
+  topProcessModeField.hidden = metric !== 'topProcess';
   audioSettings.hidden = metric !== 'audioOutput';
   cameraSettings.hidden = metric !== 'camera';
   bitwardenPathField.hidden = metric !== 'bitwarden';

@@ -11,7 +11,9 @@ internal static class GpuHotspot
     private static int Main(string[] args)
     {
         bool single = args.Length == 1 && args[0] == "--once";
-        if (!single && args.Length != 0) return 1;
+        bool extended = args.Length == 1 && (args[0] == "--telemetry" || args[0] == "--telemetry-once");
+        single |= extended && args[0] == "--telemetry-once";
+        if (!single && !extended && args.Length != 0) return 1;
 
         var computer = new Computer { IsGpuEnabled = true };
         try
@@ -20,7 +22,7 @@ internal static class GpuHotspot
             IHardware gpu = computer.Hardware.FirstOrDefault(device => device.HardwareType == HardwareType.GpuNvidia);
             if (gpu == null)
             {
-                Console.WriteLine("null");
+                Console.WriteLine(extended ? "{}" : "null");
                 return 0;
             }
 
@@ -30,9 +32,19 @@ internal static class GpuHotspot
                 var sensor = gpu.Sensors.FirstOrDefault(item =>
                     item.SensorType == SensorType.Temperature && item.Name == "GPU Hot Spot");
                 float? value = sensor == null ? null : sensor.Value;
-                Console.WriteLine(value.HasValue && value.Value > 0 && value.Value <= 150
-                    ? value.Value.ToString("0.0", CultureInfo.InvariantCulture)
-                    : "null");
+                string hotspot = value.HasValue && value.Value > 0 && value.Value <= 150
+                    ? Number(value) : "null";
+                if (extended)
+                {
+                    float? fanRpm = gpu.Sensors.Where(item => item.SensorType == SensorType.Fan &&
+                        item.Value.HasValue && item.Value.Value >= 0 && !float.IsInfinity(item.Value.Value))
+                        .Select(item => item.Value).Max();
+                    Console.WriteLine("{{\"gpuHotspot\":{0},\"gpuFanRpm\":{1}}}", hotspot, Number(fanRpm));
+                }
+                else
+                {
+                    Console.WriteLine(hotspot);
+                }
                 if (!single) Thread.Sleep(SampleIntervalMs);
             } while (!single);
             return 0;
@@ -46,5 +58,10 @@ internal static class GpuHotspot
         {
             computer.Close();
         }
+    }
+
+    private static string Number(float? value)
+    {
+        return value.HasValue ? value.Value.ToString("0.0", CultureInfo.InvariantCulture) : "null";
     }
 }
