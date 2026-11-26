@@ -3,6 +3,7 @@
 const form = document.getElementById('settings');
 const theme = document.getElementById('theme');
 const digitSize = document.getElementById('digit-size');
+const digitSizeField = document.getElementById('digit-size-field');
 const traffic = document.getElementById('traffic');
 const trafficSection = document.getElementById('traffic-section');
 const gpuSensor = document.getElementById('gpu-sensor');
@@ -14,6 +15,12 @@ const ipDisplayField = document.getElementById('ip-display-field');
 const ipSeconds = document.getElementById('ip-seconds');
 const ipProgress = document.getElementById('ip-progress');
 const ipNote = document.getElementById('ip-note');
+const fpsProcess = document.getElementById('fps-process');
+const fpsProcessField = document.getElementById('fps-process-field');
+const pingTarget = document.getElementById('ping-target');
+const pingTargetField = document.getElementById('ping-target-field');
+const volumeLetter = document.getElementById('volume-letter');
+const volumeLetterField = document.getElementById('volume-letter-field');
 const connection = document.getElementById('connection');
 const { metricForAction, supportsTraffic, normalize, digitSizeRange } = globalThis.AjazzSettings;
 
@@ -23,6 +30,7 @@ let registrationId;
 for (let size = digitSizeRange.min; size <= digitSizeRange.max; size += 1) {
   digitSize.add(new Option(`${size} px`, String(size)));
 }
+for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') volumeLetter.add(new Option(letter + ':', letter));
 
 function updateIpFields({ ipMode, ipDisplay }) {
   const external = ipMode === 'public';
@@ -43,10 +51,13 @@ function populate(incoming) {
   ipDisplay.value = settings.ipDisplay;
   ipSeconds.value = String(settings.ipSeconds);
   ipProgress.checked = settings.ipProgress;
+  fpsProcess.value = settings.fpsProcess;
+  pingTarget.value = settings.pingTarget;
+  volumeLetter.value = settings.volumeLetter;
   updateIpFields(settings);
 }
 
-for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress]) {
+for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress, fpsProcess, pingTarget, volumeLetter]) {
   input.addEventListener('change', () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     const settings = normalize({
@@ -57,9 +68,12 @@ for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipDisplay, ip
       ipDisplay: ipDisplay.value,
       ipSeconds: ipSeconds.value,
       ipProgress: ipProgress.checked,
-      digitSize: digitSize.value
+      digitSize: digitSize.value,
+      fpsProcess: fpsProcess.value,
+      pingTarget: pingTarget.value,
+      volumeLetter: volumeLetter.value
     });
-    updateIpFields(settings);
+    populate(settings);
     socket.send(JSON.stringify({ event: 'setSettings', context: registrationId, payload: settings }));
   });
 }
@@ -74,6 +88,10 @@ globalThis.connectElgatoStreamDeckSocket = (port, uuid, event, application, acti
   trafficSection.lastElementChild.textContent = metric.startsWith('cpu') ? 'Светофор CPU' : 'Светофор GPU';
   gpuSensorField.hidden = metric !== 'gpuTemperature';
   ipSettings.hidden = metric !== 'ip';
+  digitSizeField.hidden = metric === 'bitwarden';
+  fpsProcessField.hidden = metric !== 'fps';
+  pingTargetField.hidden = metric !== 'network';
+  volumeLetterField.hidden = metric !== 'disk';
   populate(info.payload?.settings);
 
   const activeSocket = new WebSocket('ws://127.0.0.1:' + port);

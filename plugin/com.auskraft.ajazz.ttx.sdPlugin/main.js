@@ -5,9 +5,13 @@ const WebSocket = require('./vendor/ws');
 const { createPublicIpLookups } = require('./public-ip.js');
 const { renderTile } = require('./render.js');
 const { createTelemetry } = require('./telemetry.cjs');
-const { metricIds, metricForAction, normalize } = require('./settings.js');
+const { createGameTelemetry } = require('./game-telemetry.cjs');
+const { createFpsMonitor } = require('./fps-telemetry.cjs');
+const { findBitwarden, openBitwarden } = require('./bitwarden-launch.cjs');
+const { hardwareMetricIds, metricForAction, normalize } = require('./settings.js');
 
-const numericMetrics = [...metricIds.filter((metric) => metric !== 'ip'), 'gpuHotspot'];
+const numericMetrics = [...hardwareMetricIds, 'gpuHotspot'];
+const gameMetrics = new Set(['microphone', 'network', 'disk']);
 const historyLength = 30;
 const tickInterval = 1000;
 
@@ -33,8 +37,12 @@ function startPlugin({ port, uuid, registerEvent }) {
   const onscreen = new Map();
   const publicIp = createPublicIpLookups();
   const histories = Object.fromEntries(numericMetrics.map((name) => [name, []]));
+  const fpsHistories = new Map();
   let telemetry = null;
+  let game = null;
+  let fpsMonitor = null;
   let snapshot = {};
+  let fpsSnapshot = {};
   let timer = null;
 
   function send(event, context, payload) {
@@ -81,11 +89,25 @@ function startPlugin({ port, uuid, registerEvent }) {
     const metric = entry.metric === 'gpuTemperature' && settings.gpuSensor === 'hotspot'
       ? 'gpuHotspot' : entry.metric;
     const isAddress = metric === 'ip';
-    const value = isAddress ? entry.ipValue : snapshot[metric] ?? null;
-    const status = isAddress ? entry.ipStatus : value === null ? 'unavailable' : 'ready';
+    let value = snapshot[metric] ?? null;
+    let history = histories[metric] ?? [];
+    let status;
+    if (isAddress) {
+      value = entry.ipValue;
+      status = entry.ipStatus;
+    } else if (metric === 'fps') {
+      value = fpsSnapshot[settings.fpsProcess] ?? null;
+      history = fpsHistories.get(settings.fpsProcess) ?? [];
+      status = value?.status;
+    } else if (gameMetrics.has(metric)) {
+      value = game?.value(metric, settings) ?? null;
+      history = value?.history ?? [];
+    } else if (metric === 'bitwarden') {
+      status = findBitwarden() ? 'ready' : 'unavailable';
+    }
     const image = renderTile({
       metric,
-      history: histories[metric] ?? [],
+      history,
       value,
       settings,
       focus,
@@ -93,11 +115,32 @@ function startPlugin({ port, uuid, registerEvent }) {
       showFlag: Boolean(!focus && entry.showFlag),
       snapshot,
       ipSecondsRemaining: Math.min(settings.ipSeconds, Math.max(0, (entry.ipNextCheck - now) / 1000)),
-      status
+      status: status ?? (value === null ? 'unavailable' : 'ready')
     });
     if (image === entry.lastImage) return;
     entry.lastImage = image;
     send('setImage', context, { target: 0, image });
+  }
+
+  function paintMics() {
+    for (const entry of onscreen.values()) {
+      if (entry.metric === 'microphone') paint(entry);
+    }
+  }
+
+  function updateFps(sample) {
+    fpsSnapshot = fpsMonitor?.snapshot() ?? {};
+    if (!sample) return;
+    for (const [name, reading] of Object.entries(fpsSnapshot)) {
+      const history = fpsHistories.get(name);
+      if (!history) continue;
+      if (!Number.isFinite(reading?.frameMs)) {
+        history.length = 0;
+        continue;
+      }
+      history.push(reading);
+      if (history.length > historyLength) history.shift();
+    }
   }
 
   function update(now = Date.now(), sample = true) {
@@ -115,6 +158,7 @@ function startPlugin({ port, uuid, registerEvent }) {
         }
       }
     }
+    if (fpsMonitor) updateFps(sample);
     for (const entry of onscreen.values()) {
       if (entry.metric === 'ip') refreshAddress(entry, now);
       paint(entry, now);
@@ -123,7 +167,7 @@ function startPlugin({ port, uuid, registerEvent }) {
 
   function syncCollectors() {
     const actions = [...onscreen.values()];
-    const needsSensors = actions.some(({ metric }) => metric !== 'ip');
+    const needsSensors = actions.some(({ metric }) => hardwareMetricIds.includes(metric));
     if (needsSensors && !telemetry) telemetry = createTelemetry();
     else if (!needsSensors && telemetry) {
       telemetry.close();
@@ -137,13 +181,54 @@ function startPlugin({ port, uuid, registerEvent }) {
       telemetry.setGpuHotspotEnabled(needsHotspot);
       if (!needsHotspot) histories.gpuHotspot.length = 0;
     }
+    if (actions.some(({ metric }) => gameMetrics.has(metric))) {
+      if (!game) game = createGameTelemetry(paintMics);
+      game.sync(actions);
+    } else if (game) {
+      game.close();
+      game = null;
+    }
+
+    const fpsProcesses = new Set(actions.filter(({ metric }) => metric === 'fps')
+      .map(({ settings }) => settings.fpsProcess));
+    if (fpsProcesses.size) {
+      if (!fpsMonitor) fpsMonitor = createFpsMonitor();
+      for (const name of fpsHistories.keys()) if (!fpsProcesses.has(name)) fpsHistories.delete(name);
+      for (const name of fpsProcesses) if (!fpsHistories.has(name)) fpsHistories.set(name, []);
+      fpsMonitor.setTargets([...fpsProcesses]);
+      updateFps(false);
+    } else if (fpsMonitor) {
+      fpsMonitor.close();
+      fpsMonitor = null;
+      fpsSnapshot = {};
+      fpsHistories.clear();
+    }
+
     if (!actions.some(isPublicIp)) publicIp.address.cancel();
     if (!actions.some(wantsCountry)) publicIp.location.cancel();
-    if (actions.length && !timer) timer = setInterval(update, tickInterval);
-    else if (!actions.length && timer) {
+    const needsTimer = actions.some(({ metric }) => metric !== 'bitwarden');
+    if (needsTimer && !timer) timer = setInterval(update, tickInterval);
+    else if (!needsTimer && timer) {
       clearInterval(timer);
       timer = null;
     }
+  }
+
+  function press(entry) {
+    if (entry.metric === 'bitwarden') {
+      void openBitwarden().then((started) => {
+        if (onscreen.get(entry.context) !== entry) return;
+        if (!started) send('showAlert', entry.context);
+        paint(entry);
+      });
+      return;
+    }
+    if (entry.metric === 'microphone') {
+      if (!game?.toggleMicrophone()) send('showAlert', entry.context);
+      return;
+    }
+    entry.focus = !entry.focus;
+    paint(entry);
   }
 
   function onHostMessage(raw) {
@@ -179,9 +264,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       syncCollectors();
     } else if (event === 'keyDown') {
       const entry = onscreen.get(context);
-      if (!entry) return;
-      entry.focus = !entry.focus;
-      paint(entry);
+      if (entry) press(entry);
     } else if (event === 'didReceiveSettings') {
       const entry = onscreen.get(context);
       if (!entry) return;

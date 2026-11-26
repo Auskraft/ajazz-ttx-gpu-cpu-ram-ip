@@ -8,9 +8,14 @@ const GRAPH = { left: 6, right: 58, bottom: 57 };
 const CENTER = SIZE / 2;
 const FONT = "Segoe UI,Arial,sans-serif";
 const MONO = "Consolas,monospace";
-const CATEGORIES = { cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa" };
+const CATEGORIES = {
+  cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa",
+  fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879"
+};
+const SIGNAL = { green: "#79ef87", amber: "#ffcd69", red: "#ff6777" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
 const flags = new Map();
+let bitwardenMark;
 const THEMES = {
   bars: { start: "#080a0e", end: "#12151b", primary: "#f4f7fc", secondary: "#c3cad6", grid: "#3f444c" },
   lines: { start: "#071318", end: "#0c2028", primary: "#f4fafc", secondary: "#b4cacf", grid: "#365059" },
@@ -238,7 +243,131 @@ function drawReading(metric, value, history, settings, snapshot, focus) {
   return label + marker + digits + unit + graph;
 }
 
-function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false }) {
+function gameHeader(label, color, theme, marker = color) {
+  return text(label, 6, 12, { size: 8.4, fill: color }) +
+    (theme === "bars" ? rect(54, 7, 3, 3, marker) : "");
+}
+
+function gameValue(value, unit, theme, settings, { baseline, preferred, color }) {
+  const palette = THEMES[theme];
+  const font = theme === "bars" ? MONO : FONT;
+  const room = unit ? 51 - widthEm(unit, FONT) * 7.5 : 53;
+  const heightLimit = Math.floor((baseline - 14) / 0.73);
+  const size = fittingSize(value, font, Math.min(settings.digitSize ?? preferred, heightLimit), room);
+  return text(value, 5.5, baseline, { size, font, fill: color ?? palette.primary }) +
+    (unit ? text(unit, 58, baseline - 1, { size: 7.5, fill: palette.secondary, anchor: "end" }) : "");
+}
+
+function gameGraph(group, measurements, theme, top, maximum) {
+  const scale = (sample) => Number.isFinite(sample) ? clamp(sample / maximum, 0, 1) * 100 : 0;
+  return drawGraph({ group, unit: "%" }, measurements.map(scale), {
+    theme, totalMemory: null, traffic: false, top
+  });
+}
+
+function decimal(value) {
+  return value.toFixed(1).replace(".", ",");
+}
+
+function drawFps(value, history, settings, focus, status) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const fps = Number.isFinite(value?.fps) ? Math.round(value.fps) : "—";
+  if (focus) return drawLargeValue(fps, fps === "—" ? "" : "FPS", palette, theme === "bars" ? MONO : FONT);
+  const header = gameHeader("FPS", CATEGORIES.fps, theme);
+  const amount = gameValue(fps, "", theme, settings, { baseline: theme === "large" ? 36 : 33, preferred: theme === "large" ? 28 : 24 });
+  const frame = Number.isFinite(value?.frameMs) ? decimal(value.frameMs) + " мс" : "";
+  const note = frame || (status === "permission" ? "Доступ к FPS" : "Ожидание игры");
+  const detail = text(note, 6, 44, { size: 7.6, fill: status === "permission" ? SIGNAL.amber : palette.secondary });
+  const samples = history.map((sample) => Number.isFinite(sample) ? sample : sample?.frameMs);
+  return header + amount + detail + gameGraph("fps", samples, theme, 47, 24);
+}
+
+function meterColor(level) {
+  if (level > -6) return SIGNAL.red;
+  if (level > -18) return SIGNAL.amber;
+  return SIGNAL.green;
+}
+
+function drawMicrophone(value, settings) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const muted = value?.muted === true;
+  const db = Number.isFinite(value?.db) ? clamp(value.db, -60, 0) : null;
+  const signal = !muted && db !== null;
+  const color = muted ? SIGNAL.red : CATEGORIES.mic;
+  const header = gameHeader("МИКРОФОН", color, theme, muted || signal ? color : palette.grid);
+  const level = muted ? "ВЫКЛ" : value ? (db === null ? "−∞" : String(Math.round(db)).replace("-", "−")) : "—";
+  const readout = gameValue(level, muted ? "" : "dBFS", theme, settings, {
+    baseline: 34, preferred: muted ? 17 : theme === "large" ? 24 : 20, color: muted ? SIGNAL.red : palette.primary
+  });
+  const count = theme === "lines" ? 26 : 13;
+  const stride = 52 / count;
+  const height = theme === "large" ? 8 : 7;
+  const meter = Array.from({ length: count }, (_, index) => {
+    const threshold = -60 + 60 * (index + 1) / count;
+    return rect(6 + stride * index, 41, theme === "lines" ? stride : stride - 1, height,
+      signal && db >= threshold ? meterColor(threshold) : palette.grid);
+  }).join("");
+  const ticks = text("−60", 6, 59, { font: MONO, size: 6.6, fill: palette.secondary }) +
+    text("−30", CENTER, 59, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "middle" }) +
+    text("0", 58, 59, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "end" });
+  return header + readout + meter + ticks;
+}
+
+function metricRow(label, value, y, palette, accent = palette.primary) {
+  return text(label, 6, y, { size: 7.3, fill: palette.secondary }) +
+    text(value, 58, y, { size: 8, fill: accent, anchor: "end" });
+}
+
+function drawNetwork(value, settings, focus) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const ping = Number.isFinite(value?.pingMs) ? Math.round(value.pingMs) : "—";
+  const loss = Number.isFinite(value?.lossPct) ? Math.round(value.lossPct) : null;
+  const jitter = Number.isFinite(value?.jitterMs) ? Math.round(value.jitterMs) : null;
+  if (focus) return drawLargeValue(ping, ping === "—" ? "" : "мс", palette, theme === "bars" ? MONO : FONT);
+  const accent = loss > 0 || (ping !== "—" && ping > 75) ? SIGNAL.amber : CATEGORIES.network;
+  const header = gameHeader("СЕТЬ", CATEGORIES.network, theme, accent);
+  const number = gameValue(ping, "мс", theme, settings, { baseline: 30, preferred: 20, color: accent });
+  const lossRow = metricRow("Потери", loss === null ? "—" : loss + "%", 39.5, palette, loss > 0 ? SIGNAL.red : palette.primary);
+  const jitterRow = metricRow("Джиттер", jitter === null ? "—" : jitter + " мс", 49, palette);
+  const graph = gameGraph("network", value?.history ?? [], theme, 52, 135);
+  return header + number + lossRow + jitterRow + graph;
+}
+
+function drawDisk(value, settings, focus) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const letter = value?.letter || settings.volumeLetter || "C";
+  const type = value?.type || "ДИСК";
+  const color = type === "SSD" ? CATEGORIES.ssd : CATEGORIES.hdd;
+  const free = Number.isFinite(value?.freePct) ? Math.round(clamp(value.freePct, 0, 100)) : "—";
+  if (focus) return drawLargeValue(free, free === "—" ? "" : "%", palette, theme === "bars" ? MONO : FONT);
+  const tone = free === "—" ? palette.primary : free <= 10 ? SIGNAL.red : free <= 25 ? SIGNAL.amber : palette.primary;
+  const header = gameHeader(type + "  " + letter + ":", color, theme);
+  const number = gameValue(free, "%", theme, settings, { baseline: 33, preferred: theme === "large" ? 28 : 24, color: tone });
+  const detail = text("СВОБОДНО", 6, 43, { size: 7, fill: palette.secondary });
+  const used = Number.isFinite(value?.usedGb) ? Math.round(value.usedGb) + " ГБ занято" : "Том недоступен";
+  const capacity = text(used, 6, 53, { size: fittingSize(used, FONT, 7.7, 52), fill: palette.primary });
+  const track = rect(6, 57, 52, 3, palette.grid);
+  const filled = free === "—" ? "" : rect(6, 57, (52 * (1 - free / 100)).toFixed(1), 3, color);
+  return header + number + detail + capacity + track + filled;
+}
+
+function drawBitwarden(theme, status) {
+  const palette = THEMES[theme];
+  if (bitwardenMark === undefined) {
+    bitwardenMark = readFileSync(join(__dirname, "images", "bitwarden-mark.png")).toString("base64");
+  }
+  const size = theme === "large" ? 38 : theme === "lines" ? 31 : 34;
+  const logo = `<image x="${(SIZE-size)/2}" y="${8+(38-size)/2}" width="${size}" height="${size}" xlink:href="data:image/png;base64,${bitwardenMark}"/>`;
+  const label = status === "unavailable" ? "Не найден" : "Bitwarden";
+  const wordmark = text(label, CENTER, 56, { size: 8.5, fill: status === "unavailable" ? SIGNAL.amber : palette.primary, anchor: "middle" });
+  return logo + wordmark;
+}
+
+function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false, status }) {
   const theme = Object.hasOwn(THEMES, settings.theme) ? settings.theme : "bars";
   const preferences = { ...settings, theme };
   const palette = THEMES[theme];
@@ -248,8 +377,13 @@ function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, 
   let content = "";
   if (flag) content = drawFlag(flag, preferences.ipProgress === true) + drawIpProgress(preferences, palette, focus, ipSecondsRemaining);
   else if (metric === "ip") content = drawIp(value, preferences, palette, focus, ipSecondsRemaining);
+  else if (metric === "fps") content = drawFps(value, history, preferences, focus, status);
+  else if (metric === "microphone") content = drawMicrophone(value, preferences);
+  else if (metric === "network") content = drawNetwork(value, preferences, focus);
+  else if (metric === "disk") content = drawDisk(value, preferences, focus);
+  else if (metric === "bitwarden") content = drawBitwarden(theme, status);
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
-  const xlink = flag ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";
+  const xlink = flag || metric === "bitwarden" ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";
   return `<svg xmlns="http://www.w3.org/2000/svg"${xlink} width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">${background}${content}</svg>`;
 }
 

@@ -5,6 +5,7 @@ const path = require("node:path");
 const { renderSvg } = require("../plugin/com.auskraft.ajazz.ttx.sdPlugin/render.js");
 
 const metrics = ["cpuTemperature", "gpuTemperature", "ramUsedGb", "cpuLoad", "gpuLoad", "ip"];
+const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden"];
 const themes = {
   bars: "Пиксельные столбики",
   lines: "Тонкие линии",
@@ -16,13 +17,18 @@ const example = {
   ramUsedGb: [14.8, [7, 7.5, 7.4, 8, 8, 9, 11, 10.5, 11, 12.8, 14.4, 14.6, 14.8]],
   cpuLoad: [39, [22, 24, 36, 58, 98, 85, 66, 39, 34, 61, 36, 30, 39]],
   gpuLoad: [83, [18, 26, 28, 43, 59, 71, 96, 97, 84, 71, 65, 82, 83]],
-  ip: ["203.0.113.42", []]
+  ip: ["203.0.113.42", []],
+  fps: [{ fps: 144, frameMs: 6.9 }, [7, 7, 8, 12, 7, 8, 7, 9, 8, 7, 11, 8, 7]],
+  microphone: [{ db: -16, muted: false }, []],
+  network: [{ pingMs: 24, lossPct: 0, jitterMs: 3, history: [23, 28, 40, 22, 29, 25, 51, 22, 32, 23, 33, 24, 31] }, []],
+  disk: [{ letter: "C", type: "SSD", usedGb: 286, totalGb: 447, freePct: 36 }, []],
+  bitwarden: [null, []]
 };
 
-function tile(metric, theme, focus = false, extra = {}) {
+function tile(metric, theme, focus = false, extra = {}, suffix = "") {
   const [exampleValue, history] = example[metric];
   const value = focus && metric === "cpuLoad" ? 18 : exampleValue;
-  const key = focus ? "focus-" + metric : theme + "-" + metric;
+  const key = (focus ? "focus-" + metric : theme + "-" + metric) + suffix;
   return renderSvg({
     metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15 },
     snapshot: { ramTotalGb: 32 }, ...extra
@@ -46,12 +52,18 @@ function html(body, style) {
 const target = process.argv[2];
 if (!target) throw new Error("Pass a temporary preview directory.");
 fs.mkdirSync(target, { recursive: true });
-const sheet = [logo, logo, ...metrics.map((metric) => tile(metric, "bars"))];
+const sheet = [logo, logo, ...[...metrics, ...gameMetrics].map((metric) => tile(metric, "bars"))];
 fs.writeFileSync(path.join(target, "icons.html"), html("<main>" + sheet.join("") + "</main>",
   "html,body{margin:0}main{display:grid;grid-template-columns:repeat(4,128px);width:512px}svg{display:block;width:128px;height:128px}"));
 
 const variants = Object.entries(themes).map(([theme, name]) =>
   `<section><h2>${name}</h2><div class="device">${metrics.map((metric) => tile(metric, theme)).join("")}</div></section>`);
+const gamingVariants = Object.entries(themes).map(([theme, name]) => {
+  const tiles = gameMetrics.slice(0, 4).map((metric) => tile(metric, theme));
+  const hardDrive = { letter: "D", type: "HDD", usedGb: 318, totalGb: 684, freePct: 54 };
+  tiles.push(tile("disk", theme, false, { value: hardDrive }, "-hdd"), tile("bitwarden", theme));
+  return `<section><h2>${name}</h2><div class="device">${tiles.join("")}</div></section>`;
+});
 fs.writeFileSync(path.join(target, "themes.html"), html(`
   <main>
     <header><div><p>AJAZZ AKP03R</p><h1>Мониторинг ПК</h1></div><span>Демонстрационные данные</span></header>
@@ -68,6 +80,20 @@ fs.writeFileSync(path.join(target, "themes.html"), html(`
   footer{display:flex;gap:16px;margin-top:27px;align-items:center;font-size:13px;font-weight:650;color:#a9b6c9}
   .cpu{color:#ff777f}.gpu{color:#8aef66}.ram{color:#79baff}.ip{color:#7bcafa}.gradient{margin-left:auto;font-weight:400}
   .gradient:before{content:"";display:inline-block;width:58px;height:5px;margin-right:10px;vertical-align:middle;border-radius:999px;background:linear-gradient(90deg,#65f17c,#ffde57,#ff5363)}
+`));
+
+fs.writeFileSync(path.join(target, "game-themes.html"), html(`
+  <main>
+    <header><div><p>AJAZZ AKP03R</p><h1>Игровые кнопки и Bitwarden</h1></div><span>Демонстрационные данные</span></header>
+    <div class="themes">${gamingVariants.join("")}</div>
+  </main>`, `
+  *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
+  main{padding:32px 40px;width:1110px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:27px}
+  header p,h1,h2{margin:0}header p{font-size:13px;font-weight:650;letter-spacing:.11em;color:#9eb1c8}
+  h1{font-size:37px;line-height:1.18;letter-spacing:-.035em;margin-top:5px}header span{font-size:13px;color:#a9b6c9}
+  .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
+  .device{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid #424b5b;border-radius:17px;background:#252d39;box-shadow:0 7px 14px #03070c66}
+  svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
 `));
 
 fs.writeFileSync(path.join(target, "focus.html"), html(`

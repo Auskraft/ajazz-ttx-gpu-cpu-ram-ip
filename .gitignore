@@ -4,5 +4,8 @@
 /cpu-sensor/vendor/
 /cpu-sensor/upstream*.zip
 /gpu-sensor/dist/
+/game-sensor/dist/
+/fps-sensor/cache/
+/fps-sensor/dist/
 /*.tgz
 *.log
