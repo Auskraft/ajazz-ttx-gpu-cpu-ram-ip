@@ -5,8 +5,8 @@
   "CategoryIcon": "images/category.png",
   "Icon": "images/plugin.png",
   "Author": "Auskraft",
-  "Description": "Мониторинг ПК, игровые кнопки и запуск Bitwarden для AJAZZ Stream Dock.",
-  "Version": "1.4.0",
+  "Description": "Мониторинг ПК, игровые кнопки, управление звуком и камерой для AJAZZ Stream Dock.",
+  "Version": "1.5.0",
   "SDKVersion": 3,
   "CodePathWin": "main.js",
   "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
@@ -135,6 +135,17 @@
       "PropertyInspectorPath": "inspector/index.html"
     },
     {
+      "UUID": "com.auskraft.ajazz.ttx.camera",
+      "Name": "Камера",
+      "Icon": "images/camera.png",
+      "Tooltip": "Показывает статус камеры Windows. Нажатие включает или отключает выбранную камеру.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/camera.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
       "UUID": "com.auskraft.ajazz.ttx.bitwarden",
       "Name": "Открыть Bitwarden",
       "Icon": "images/bitwarden.png",
@@ -142,7 +153,8 @@
       "Controllers": ["Keypad"],
       "States": [{ "Image": "images/bitwarden.png", "ShowTitle": false }],
       "UserTitleEnabled": false,
-      "SupportedInMultiActions": false
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
     }
   ]
 }

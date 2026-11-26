@@ -3,8 +3,8 @@
 
   const prefix = 'com.auskraft.ajazz.ttx.';
   const hardwareMetricIds = ['cpuTemperature', 'gpuTemperature', 'ramUsedGb', 'cpuLoad', 'gpuLoad'];
-  const metricIds = [...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput'];
-  const themes = ['bars', 'lines', 'large'];
+  const metricIds = [...hardwareMetricIds, 'ip', 'fps', 'microphone', 'network', 'disk', 'bitwarden', 'audioOutput', 'camera'];
+  const themes = ['bars', 'lines', 'large', 'amber', 'ice'];
   const digitSizeRange = Object.freeze({ min: 12, max: 30 });
 
   function metricForAction(action) {
@@ -18,10 +18,17 @@
       metric === 'gpuTemperature' || metric === 'gpuLoad';
   }
 
+  function normalizeFpsExecutable(value) {
+    let name = typeof value === 'string' ? value.trim().replace(/^"(.*)"$/, '$1').toLowerCase() : '';
+    if (/^(?:[a-z]:[\\/]|\\\\)/i.test(name)) name = name.split(/[\\/]/).at(-1);
+    if (!name || name.endsWith('.') || /^[.-]|[\x00-\x1f\x7f<>:"/\\|?*]/.test(name)) return '';
+    const executable = name.endsWith('.exe') ? name : name + '.exe';
+    return executable.length <= 255 ? executable : '';
+  }
+
   function normalizeFpsProcess(value) {
-    const name = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if (!/^[a-z0-9_][a-z0-9_. -]{0,75}$/.test(name) || name.endsWith('.')) return 'korabli.exe';
-    return name.endsWith('.exe') ? name : name + '.exe';
+    if (typeof value === 'string' && value.trim().toLowerCase() === 'auto') return 'auto';
+    return normalizeFpsExecutable(value) || 'auto';
   }
 
   function normalizePingTarget(value) {
@@ -31,9 +38,15 @@
     return target.length <= 253 && (hostname.test(target) || ipv6.test(target)) ? target : '1.1.1.1';
   }
 
-  function normalizeAudioOutputId(value) {
+  function normalizeDeviceId(value) {
     return typeof value === 'string' && value.length <= 512 && value.trim() && !/[\x00-\x1f\x7f]/.test(value)
       ? value : '';
+  }
+
+  function normalizeBitwardenPath(value) {
+    const target = typeof value === 'string' ? value.trim().replace(/^"(.*)"$/, '$1').replace(/\//g, '\\') : '';
+    return target.length <= 1024 && /^[a-z]:\\(?:[^<>:"/\\|?*\x00-\x1f\x7f]+\\)*Bitwarden\.exe$/i.test(target)
+      ? target : '';
   }
 
   function normalize(settings) {
@@ -41,6 +54,7 @@
     const size = source.digitSize;
     const digitSize = typeof size === 'number' || (typeof size === 'string' && size.trim())
       ? Number(size) : NaN;
+    const fpsProcess = normalizeFpsProcess(source.fpsProcess);
 
     return {
       theme: themes.includes(source.theme) ? source.theme : 'bars',
@@ -53,18 +67,22 @@
       digitSize: Number.isFinite(digitSize)
         ? Math.min(digitSizeRange.max, Math.max(digitSizeRange.min, Math.round(digitSize)))
         : null,
-      fpsProcess: normalizeFpsProcess(source.fpsProcess),
+      fpsProcess,
+      fpsManualProcess: fpsProcess === 'auto' ? normalizeFpsExecutable(source.fpsManualProcess) : fpsProcess,
       pingTarget: normalizePingTarget(source.pingTarget),
-      audioOutputA: normalizeAudioOutputId(source.audioOutputA),
-      audioOutputB: normalizeAudioOutputId(source.audioOutputB),
+      audioOutputA: normalizeDeviceId(source.audioOutputA),
+      audioOutputB: normalizeDeviceId(source.audioOutputB),
+      audioShowVolume: source.audioShowVolume === true,
+      cameraId: normalizeDeviceId(source.cameraId),
+      bitwardenPath: normalizeBitwardenPath(source.bitwardenPath),
       volumeLetter: typeof source.volumeLetter === 'string' && /^[a-z]:?$/i.test(source.volumeLetter.trim())
         ? source.volumeLetter.trim()[0].toUpperCase() : 'C'
     };
   }
 
   const api = {
-    metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess,
-    normalizeAudioOutputId, digitSizeRange
+    metricIds, hardwareMetricIds, metricForAction, supportsTraffic, normalize, normalizeFpsProcess, normalizeFpsExecutable,
+    normalizeAudioOutputId: normalizeDeviceId, normalizeCameraId: normalizeDeviceId, normalizeBitwardenPath, digitSizeRange
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.AjazzSettings = api;

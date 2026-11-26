@@ -33,3 +33,9 @@ if (!(Test-Path -LiteralPath $license)) {
 Copy-Item -LiteralPath $binary -Destination (Join-Path $Destination 'PresentMon.exe')
 Copy-Item -LiteralPath $license -Destination $Destination
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'NOTICE.md') -Destination $Destination
+
+$compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+$foregroundSource = Join-Path $PSScriptRoot 'ForegroundProcess.cs'
+$foregroundBinary = Join-Path $Destination 'ForegroundProcess.exe'
+& $compiler /nologo /target:exe /platform:x64 /optimize+ "/out:$foregroundBinary" $foregroundSource
+if ($LASTEXITCODE -ne 0) { throw "Foreground process helper compilation failed ($LASTEXITCODE)." }

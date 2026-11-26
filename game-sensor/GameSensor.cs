@@ -24,6 +24,7 @@ internal static class GameSensor
         bool once = args[args.Length - 1] == "--once";
         Console.OutputEncoding = new UTF8Encoding(false);
         if (args[0] == "output") return RunAudioOutput(args);
+        if (args[0] == "camera") return RunCamera(args);
         if (!once)
         {
             var commands = new Thread(ReadCommands) { IsBackground = true };
@@ -65,6 +66,43 @@ internal static class GameSensor
     private static void Emit(object sample)
     {
         Console.WriteLine(Json.Serialize(sample));
+    }
+
+    private static int RunCamera(string[] args)
+    {
+        try
+        {
+            if (args.Length == 2 && args[1] == "--once")
+            {
+                Emit(CameraControl.List());
+                return 0;
+            }
+            if (args.Length != 4 || !CameraControl.ValidId(args[2]) ||
+                (args[3] != "enable" && args[3] != "disable")) return 2;
+
+            bool enable = args[3] == "enable";
+            if (args[1] == "--request")
+            {
+                Emit(CameraControl.Request(args[2], enable));
+                return 0;
+            }
+            if (args[1] == "--set")
+            {
+                var result = CameraControl.Set(args[2], enable);
+                Emit(result);
+                return result.reason == null ? 0 : 1;
+            }
+            return 2;
+        }
+        catch (InvalidOperationException)
+        {
+            if (args.Length == 4 && args[1] == "--request")
+            {
+                Emit(new CameraControl.Result(false, "unavailable", "failed"));
+                return 0;
+            }
+            return 1;
+        }
     }
 
     private static int RunAudioOutput(string[] args)

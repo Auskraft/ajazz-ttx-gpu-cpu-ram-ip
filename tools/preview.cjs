@@ -5,11 +5,13 @@ const path = require("node:path");
 const { renderSvg } = require("../plugin/com.auskraft.ajazz.ttx.sdPlugin/render.js");
 
 const metrics = ["cpuTemperature", "gpuTemperature", "ramUsedGb", "cpuLoad", "gpuLoad", "ip"];
-const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden", "audioOutput"];
+const gameMetrics = ["fps", "microphone", "network", "disk", "bitwarden", "audioOutput", "camera"];
 const themes = {
   bars: "Пиксельные столбики",
   lines: "Тонкие линии",
-  large: "Цифры крупнее"
+  large: "Цифры крупнее",
+  amber: "Янтарный терминал",
+  ice: "Ледяной контур"
 };
 const example = {
   cpuTemperature: [77, [57, 59, 61, 69, 74, 81, 88, 83, 74, 69, 70, 74, 77]],
@@ -23,7 +25,8 @@ const example = {
   network: [{ pingMs: 24, lossPct: 0, jitterMs: 3, history: [23, 28, 40, 22, 29, 25, 51, 22, 32, 23, 33, 24, 31] }, []],
   disk: [{ letter: "C", type: "SSD", usedGb: 286, totalGb: 447, freePct: 36 }, []],
   bitwarden: [null, []],
-  audioOutput: [{ name: "Наушники", slot: 1, configured: true }, []]
+  audioOutput: [{ name: "Наушники", slot: 1, configured: true, volumePercent: 62 }, []],
+  camera: [{ name: "Logitech C922", enabled: true }, []]
 };
 
 function tile(metric, theme, focus = false, extra = {}, suffix = "") {
@@ -31,7 +34,7 @@ function tile(metric, theme, focus = false, extra = {}, suffix = "") {
   const value = focus && metric === "cpuLoad" ? 18 : exampleValue;
   const key = (focus ? "focus-" + metric : theme + "-" + metric) + suffix;
   return renderSvg({
-    metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15 },
+    metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15, audioShowVolume: true },
     snapshot: { ramTotalGb: 32 }, ...extra
   }).replaceAll('id="face"', `id="face-${key}"`)
     .replaceAll("#face)", `#face-${key})`)
@@ -61,7 +64,7 @@ const variants = Object.entries(themes).map(([theme, name]) =>
   `<section><h2>${name}</h2><div class="device">${metrics.map((metric) => tile(metric, theme)).join("")}</div></section>`);
 const gamingVariants = Object.entries(themes).map(([theme, name]) => {
   const tiles = gameMetrics.slice(0, 4).map((metric) => tile(metric, theme));
-  const audio = theme === "lines" ? { name: "Динамики", slot: 2, configured: true } : example.audioOutput[0];
+  const audio = theme === "lines" ? { name: "Динамики", slot: 2, configured: true, volumePercent: 45 } : example.audioOutput[0];
   tiles.push(tile("audioOutput", theme, false, { value: audio }), tile("bitwarden", theme));
   return `<section><h2>${name}</h2><div class="device">${tiles.join("")}</div></section>`;
 });
@@ -72,10 +75,10 @@ fs.writeFileSync(path.join(target, "themes.html"), html(`
     <footer><span class="cpu">CPU</span><span class="gpu">GPU</span><span class="ram">RAM</span><span class="ip">IP</span><span class="gradient">Цвет графика меняется по значению</span></footer>
   </main>`, `
   *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
-  main{padding:37px 40px;width:1110px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:35px}
+  main{padding:37px 40px;width:1390px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:35px}
   header p,h1,h2{margin:0}header p{font-size:13px;font-weight:650;letter-spacing:.11em;color:#9eb1c8}
   h1{font-size:37px;line-height:1.18;letter-spacing:-.035em;margin-top:5px}header span{font-size:13px;color:#a9b6c9}
-  .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
+  .themes{display:grid;grid-template-columns:repeat(5,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
   .device{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid #424b5b;border-radius:17px;background:#252d39;box-shadow:0 7px 14px #03070c66}
   svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
   footer{display:flex;gap:16px;margin-top:27px;align-items:center;font-size:13px;font-weight:650;color:#a9b6c9}
@@ -89,11 +92,28 @@ fs.writeFileSync(path.join(target, "game-themes.html"), html(`
     <div class="themes">${gamingVariants.join("")}</div>
   </main>`, `
   *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
-  main{padding:32px 40px;width:1110px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:27px}
+  main{padding:32px 40px;width:1390px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:27px}
   header p,h1,h2{margin:0}header p{font-size:13px;font-weight:650;letter-spacing:.11em;color:#9eb1c8}
   h1{font-size:37px;line-height:1.18;letter-spacing:-.035em;margin-top:5px}header span{font-size:13px;color:#a9b6c9}
-  .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
+  .themes{display:grid;grid-template-columns:repeat(5,1fr);gap:20px}h2{font-size:16px;font-weight:600;margin-bottom:12px}
   .device{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;border:1px solid #424b5b;border-radius:17px;background:#252d39;box-shadow:0 7px 14px #03070c66}
+  svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
+`));
+
+fs.writeFileSync(path.join(target, "camera-microphone.html"), html(`
+  <main>
+    <header><h1>Камера и микрофон</h1><span>Демонстрационные данные</span></header>
+    <div class="device">
+      ${tile("camera", "ice")}
+      ${tile("camera", "ice", false, { value: { name: "Logitech C922", enabled: false } }, "-off")}
+      ${tile("microphone", "amber")}
+      ${tile("microphone", "amber", false, { value: { muted: true } }, "-off")}
+    </div>
+  </main>`, `
+  *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
+  main{padding:25px 27px;width:580px}header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px}
+  h1{margin:0;font-size:21px;font-weight:650}header span{font-size:12px;color:#a9b6c9}
+  .device{display:grid;grid-template-columns:repeat(4,112px);gap:8px;width:fit-content;padding:9px;border:1px solid #424b5b;border-radius:13px;background:#252d39}
   svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
 `));
 

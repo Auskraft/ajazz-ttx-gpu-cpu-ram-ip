@@ -6,8 +6,9 @@ const { createPublicIpLookups } = require('./public-ip.js');
 const { renderTile } = require('./render.js');
 const { createTelemetry } = require('./telemetry.cjs');
 const { createGameTelemetry } = require('./game-telemetry.cjs');
-const { createFpsMonitor } = require('./fps-telemetry.cjs');
+const { createFpsMonitor, listFpsApps } = require('./fps-telemetry.cjs');
 const { createAudioOutput } = require('./audio-output.cjs');
+const { CameraControl } = require('./camera-control.cjs');
 const { openBitwarden } = require('./bitwarden-launch.cjs');
 const { hardwareMetricIds, metricForAction, normalize } = require('./settings.js');
 
@@ -16,6 +17,21 @@ const gameMetrics = new Set(['microphone', 'network', 'disk']);
 const historyLength = 30;
 const tickInterval = 1000;
 const audioPollInterval = 2000;
+const cameraPollInterval = 5000;
+const animationFrameInterval = 125;
+const animationFrameCount = 16;
+const deviceRequests = { audioOutput: 'audioOutputs', camera: 'cameras', fps: 'fpsApps' };
+
+function animateStatus(metric, value) {
+  return (metric === 'microphone' && value?.muted === false) ||
+    (metric === 'camera' && value?.enabled === true && !value.switching);
+}
+
+function selectedCamera(settings, devices) {
+  if (!devices) return null;
+  if (settings.cameraId) return devices.find(({ id }) => id === settings.cameraId) ?? null;
+  return devices.length === 1 ? devices[0] : null;
+}
 
 function isPublicIp({ metric, settings }) {
   return metric === 'ip' && settings.ipMode === 'public';
@@ -50,6 +66,12 @@ function startPlugin({ port, uuid, registerEvent }) {
   let audioRead = null;
   let audioNextCheck = 0;
   let audioSwitching = false;
+  let cameraControl = null;
+  let cameras = null;
+  let cameraRead = null;
+  let cameraNextCheck = 0;
+  let cameraSwitch = null;
+  let animationTimer = null;
   let timer = null;
 
   function send(event, context, payload, action) {
@@ -109,6 +131,9 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (metric === 'audioOutput') {
       value = audioOutputValue(settings, audioSnapshot);
       status = audioSnapshot?.devices.length ? 'ready' : 'unavailable';
+    } else if (metric === 'camera') {
+      value = cameraValue(entry);
+      status = value.enabled === null && !value.selectionRequired ? 'unavailable' : 'ready';
     } else if (gameMetrics.has(metric)) {
       value = game?.value(metric, settings) ?? null;
       history = value?.history ?? [];
@@ -122,6 +147,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       country: entry.ipCountry,
       showFlag: Boolean(!focus && entry.showFlag),
       snapshot,
+      animationPhase: animateStatus(metric, value) ? Math.floor(now / animationFrameInterval) % animationFrameCount : undefined,
       ipSecondsRemaining: Math.min(settings.ipSeconds, Math.max(0, (entry.ipNextCheck - now) / 1000)),
       status: status ?? (value === null ? 'unavailable' : 'ready')
     });
@@ -130,10 +156,32 @@ function startPlugin({ port, uuid, registerEvent }) {
     send('setImage', context, { target: 0, image });
   }
 
-  function paintMics() {
+  function isAnimating(entry) {
+    if (entry.metric === 'microphone') return animateStatus(entry.metric, game?.value(entry.metric, entry.settings));
+    return entry.metric === 'camera' && animateStatus(entry.metric, cameraValue(entry));
+  }
+
+  function paintAnimationFrame() {
+    const now = Date.now();
     for (const entry of onscreen.values()) {
-      if (entry.metric === 'microphone') paint(entry);
+      if (isAnimating(entry)) paint(entry, now);
     }
+  }
+
+  function syncAnimation() {
+    const needed = [...onscreen.values()].some(isAnimating);
+    if (needed && !animationTimer) animationTimer = setInterval(paintAnimationFrame, animationFrameInterval);
+    else if (!needed && animationTimer) {
+      clearInterval(animationTimer);
+      animationTimer = null;
+    }
+  }
+
+  function paintMetric(metric) {
+    for (const entry of onscreen.values()) {
+      if (entry.metric === metric) paint(entry);
+    }
+    syncAnimation();
   }
 
   function audioOutputValue({ audioOutputA: first, audioOutputB: second }, reading) {
@@ -144,7 +192,8 @@ function startPlugin({ port, uuid, registerEvent }) {
     const pairAvailable = configured && selected.every((endpoint) => devices.some(({ id }) => id === endpoint));
     const activeIndex = configured && active ? selected.indexOf(active.id) : -1;
     const slot = activeIndex >= 0 ? activeIndex + 1 : null;
-    return { name: active?.name ?? '', slot, configured, pairAvailable };
+    const volume = reading?.volumePercent;
+    return { name: active?.name ?? '', slot, configured, pairAvailable, volumePercent: Number.isFinite(volume) ? volume : null };
   }
 
   function readAudioOutputs() {
@@ -164,11 +213,19 @@ function startPlugin({ port, uuid, registerEvent }) {
     return audioRead;
   }
 
-  async function sendAudioOutputs(entry, action, requestId) {
-    const reading = await readAudioOutputs();
+  async function sendDevices(entry, action, requestId) {
+    let devices;
+    if (entry.metric === 'camera') {
+      devices = await readCameras();
+    } else if (entry.metric === 'fps') {
+      const apps = await listFpsApps().catch(() => null);
+      devices = apps?.map((name) => ({ id: name, name }));
+    } else {
+      devices = (await readAudioOutputs())?.devices;
+    }
     if (onscreen.get(entry.context) !== entry) return;
     send('sendToPropertyInspector', entry.context, {
-      requestId, available: Boolean(reading), devices: reading?.devices ?? []
+      requestId, available: Boolean(devices), devices: devices ?? []
     }, action);
   }
 
@@ -200,8 +257,74 @@ function startPlugin({ port, uuid, registerEvent }) {
     if (onscreen.get(entry.context) === entry) send('showAlert', entry.context);
   }
 
+  function cameraValue(entry) {
+    const selected = selectedCamera(entry.settings, cameras);
+    let enabled = null;
+    if (selected?.status === 'enabled') enabled = true;
+    else if (selected?.status === 'disabled') enabled = false;
+    return {
+      name: selected?.name ?? '',
+      enabled,
+      selectionRequired: !entry.settings.cameraId && (cameras?.length ?? 0) > 1,
+      switching: Boolean(cameraSwitch && (cameraSwitch.entry === entry ||
+        (selected && cameraSwitch.id === selected.id)))
+    };
+  }
+
+  function readCameras() {
+    if (cameraRead) return cameraRead;
+    const control = cameraControl;
+    if (!control) return Promise.resolve(null);
+    cameraNextCheck = Date.now() + cameraPollInterval;
+    cameraRead = control.refresh().catch(() => null).then((reading) => {
+      if (cameraControl !== control) return null;
+      cameras = reading;
+      cameraRead = null;
+      paintMetric('camera');
+      return reading;
+    });
+    return cameraRead;
+  }
+
+  async function switchCamera(entry) {
+    if (cameraSwitch || !cameraControl) return;
+    const control = cameraControl;
+    const cameraId = entry.settings.cameraId;
+    const operation = { entry, id: null };
+    cameraSwitch = operation;
+    try {
+      const devices = await readCameras();
+      if (onscreen.get(entry.context) !== entry || cameraControl !== control ||
+          entry.settings.cameraId !== cameraId) return;
+      const chosen = selectedCamera(entry.settings, devices);
+      if (chosen?.status === 'enabled' || chosen?.status === 'disabled') {
+        operation.id = chosen.id;
+        paintMetric('camera');
+        const desiredStatus = chosen.status === 'enabled' ? 'disabled' : 'enabled';
+        const result = await control.setEnabled(chosen.id, desiredStatus === 'enabled');
+        if (cameraControl !== control) return;
+        // An inspector refresh may have completed before Windows applied the change.
+        if (cameraRead) await cameraRead;
+        const refreshed = await readCameras();
+        const verified = refreshed?.find(({ id }) => id === chosen.id);
+        if (result.reason === 'cancelled' || verified?.status === desiredStatus) return;
+      }
+    } catch {
+      if (cameraControl === control) void readCameras();
+    } finally {
+      cameraSwitch = null;
+      paintMetric('camera');
+    }
+    if (onscreen.get(entry.context) === entry) send('showAlert', entry.context);
+  }
+
   function updateFps(sample) {
+    const lastForeground = fpsSnapshot.auto?.processId ?? null;
     fpsSnapshot = fpsMonitor?.snapshot() ?? {};
+    if (lastForeground !== (fpsSnapshot.auto?.processId ?? null)) {
+      const history = fpsHistories.get('auto');
+      if (history) history.length = 0;
+    }
     if (!sample) return;
     for (const [name, reading] of Object.entries(fpsSnapshot)) {
       const history = fpsHistories.get(name);
@@ -232,14 +355,25 @@ function startPlugin({ port, uuid, registerEvent }) {
     }
     if (fpsMonitor) updateFps(sample);
     if (audioOutput && !audioSwitching && now >= audioNextCheck) void readAudioOutputs();
+    if (cameraControl && !cameraSwitch && now >= cameraNextCheck) void readCameras();
     for (const entry of onscreen.values()) {
       if (entry.metric === 'ip') refreshAddress(entry, now);
       paint(entry, now);
     }
+    syncAnimation();
   }
 
   function syncCollectors() {
     const actions = [...onscreen.values()];
+    const needsCamera = actions.some(({ metric }) => metric === 'camera');
+    if (needsCamera && !cameraControl) {
+      cameraControl = new CameraControl();
+    } else if (!needsCamera && cameraControl) {
+      cameraControl = null;
+      cameras = null;
+      cameraRead = null;
+      cameraNextCheck = 0;
+    }
     const needsAudioOutput = actions.some(({ metric }) => metric === 'audioOutput');
     if (needsAudioOutput && !audioOutput) {
       audioOutput = createAudioOutput();
@@ -265,7 +399,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       if (!needsHotspot) histories.gpuHotspot.length = 0;
     }
     if (actions.some(({ metric }) => gameMetrics.has(metric))) {
-      if (!game) game = createGameTelemetry(paintMics);
+      if (!game) game = createGameTelemetry(() => paintMetric('microphone'));
       game.sync(actions);
     } else if (game) {
       game.close();
@@ -295,15 +429,20 @@ function startPlugin({ port, uuid, registerEvent }) {
       clearInterval(timer);
       timer = null;
     }
+    syncAnimation();
   }
 
   function press(entry) {
+    if (entry.metric === 'camera') {
+      void switchCamera(entry);
+      return;
+    }
     if (entry.metric === 'audioOutput') {
       void switchAudioOutput(entry);
       return;
     }
     if (entry.metric === 'bitwarden') {
-      void openBitwarden().then((started) => {
+      void openBitwarden(entry.settings.bitwardenPath).then((started) => {
         if (onscreen.get(entry.context) !== entry) return;
         if (!started) send('showAlert', entry.context);
         paint(entry);
@@ -349,12 +488,15 @@ function startPlugin({ port, uuid, registerEvent }) {
     } else if (event === 'willDisappear') {
       onscreen.delete(context);
       syncCollectors();
-    } else if (event === 'sendToPlugin' && metricForAction(action) === 'audioOutput' &&
-        payload?.request === 'audioOutputs' && typeof payload.requestId === 'string' &&
-        /^\d{1,16}-\d{1,8}$/.test(payload.requestId)) {
+    } else if (event === 'sendToPlugin') {
+      const metric = metricForAction(action);
+      const request = deviceRequests[metric];
       // Stream Dock can pass the inspector UUID as the message context.
-      const entry = onscreen.get(context) ?? onscreen.get(payload.actionContext);
-      if (entry?.metric === 'audioOutput') void sendAudioOutputs(entry, action, payload.requestId);
+      const entry = onscreen.get(context) ?? onscreen.get(payload?.actionContext);
+      if (request && entry?.metric === metric && payload?.request === request &&
+          typeof payload.requestId === 'string' && /^\d{1,16}-\d{1,8}$/.test(payload.requestId)) {
+        void sendDevices(entry, action, payload.requestId);
+      }
     } else if (event === 'keyDown') {
       const entry = onscreen.get(context);
       if (entry) press(entry);

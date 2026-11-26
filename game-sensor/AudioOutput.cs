@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 internal sealed class AudioOutput : IDisposable
 {
     private const uint Active = 1;
+    private const uint LocalCom = 5;
     private const int NotFound = unchecked((int)0x80070490);
     private static readonly PropertyKey FriendlyName = new PropertyKey
     {
@@ -21,7 +22,17 @@ internal sealed class AudioOutput : IDisposable
             string id = GetId(endpoint);
             devices.Add(new { id, name = GetName(endpoint) ?? id });
         }
-        return new { devices, activeId = GetDefault(AudioRole.Multimedia) };
+        IMMDevice active = GetDefaultEndpoint(AudioRole.Multimedia);
+        try
+        {
+            return new
+            {
+                devices,
+                activeId = active == null ? null : GetId(active),
+                volumePercent = GetVolumePercent(active)
+            };
+        }
+        finally { Release(active); }
     }
 
     public bool Switch(string id)
@@ -75,15 +86,36 @@ internal sealed class AudioOutput : IDisposable
 
     private string GetDefault(AudioRole role)
     {
-        IMMDevice endpoint = null;
+        IMMDevice endpoint = GetDefaultEndpoint(role);
+        try { return endpoint == null ? null : GetId(endpoint); }
+        finally { Release(endpoint); }
+    }
+
+    private IMMDevice GetDefaultEndpoint(AudioRole role)
+    {
+        IMMDevice endpoint;
+        int result = enumerator.GetDefaultAudioEndpoint(AudioFlow.Render, role, out endpoint);
+        if (result >= 0) return endpoint;
+        Release(endpoint);
+        if (result != NotFound) Check(result);
+        return null;
+    }
+
+    private static int? GetVolumePercent(IMMDevice endpoint)
+    {
+        if (endpoint == null) return null;
+        Guid interfaceId = typeof(IAudioEndpointVolume).GUID;
+        object instance = null;
         try
         {
-            int result = enumerator.GetDefaultAudioEndpoint(AudioFlow.Render, role, out endpoint);
-            if (result == NotFound) return null;
-            Check(result);
-            return GetId(endpoint);
+            if (endpoint.Activate(ref interfaceId, LocalCom, IntPtr.Zero, out instance) < 0) return null;
+            var volume = instance as IAudioEndpointVolume;
+            float scalar;
+            if (volume == null || volume.GetMasterVolumeLevelScalar(out scalar) < 0 ||
+                float.IsNaN(scalar) || float.IsInfinity(scalar)) return null;
+            return (int)Math.Round(Math.Max(0, Math.Min(1, scalar)) * 100);
         }
-        finally { Release(endpoint); }
+        finally { Release(instance); }
     }
 
     private static string GetId(IMMDevice endpoint)

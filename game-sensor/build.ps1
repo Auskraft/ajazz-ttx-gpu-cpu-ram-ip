@@ -7,7 +7,8 @@ $source = @(
     (Join-Path $PSScriptRoot 'GameSensor.cs'),
     (Join-Path $PSScriptRoot 'Microphone.cs'),
     (Join-Path $PSScriptRoot 'CoreAudio.cs'),
-    (Join-Path $PSScriptRoot 'AudioOutput.cs')
+    (Join-Path $PSScriptRoot 'AudioOutput.cs'),
+    (Join-Path $PSScriptRoot 'CameraControl.cs')
 )
 $binary = Join-Path $Destination 'GameSensor.exe'
 & $compiler /nologo /target:exe /platform:x64 /codepage:65001 /optimize+ /reference:System.Management.dll /reference:System.Web.Extensions.dll "/out:$binary" $source

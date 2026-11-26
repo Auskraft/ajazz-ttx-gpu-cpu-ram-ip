@@ -166,24 +166,6 @@ internal sealed class Microphone : IDisposable
         [PreserveSig] int GetPeakValue(out float value);
     }
 
-    [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IAudioEndpointVolume
-    {
-        [PreserveSig] int RegisterControlChangeNotify(IntPtr callback);
-        [PreserveSig] int UnregisterControlChangeNotify(IntPtr callback);
-        [PreserveSig] int GetChannelCount(out uint count);
-        [PreserveSig] int SetMasterVolumeLevel(float level, IntPtr context);
-        [PreserveSig] int SetMasterVolumeLevelScalar(float level, IntPtr context);
-        [PreserveSig] int GetMasterVolumeLevel(out float level);
-        [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
-        [PreserveSig] int SetChannelVolumeLevel(uint channel, float level, IntPtr context);
-        [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, IntPtr context);
-        [PreserveSig] int GetChannelVolumeLevel(uint channel, out float level);
-        [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
-        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, IntPtr context);
-        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
-    }
-
     [ComImport, Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IAudioClient
     {

@@ -15,8 +15,8 @@
     body { margin: 0; padding: 12px; }
     fieldset { display: grid; gap: 12px; border: 0; margin: 0; padding: 0; min-width: 0; }
     .field { display: grid; gap: 5px; }
-    .ip-settings, .audio-settings { display: grid; gap: 10px; min-width: 0; }
-    .audio-settings .field { min-width: 0; }
+    .ip-settings, .fps-settings, .device-settings { display: grid; gap: 10px; min-width: 0; }
+    .device-settings .field { min-width: 0; }
     select, input, button { font: inherit; }
     select, input[type="text"] {
       width: 100%;
@@ -41,22 +41,24 @@
     .check { display: flex; align-items: center; gap: 7px; min-height: 24px; }
     .check input { flex: none; margin: 0; }
     p { color: #c3c9d3; margin: 0; }
-    .audio-settings p { overflow-wrap: anywhere; }
+    .device-settings p { overflow-wrap: anywhere; }
     [hidden] { display: none; }
   </style>
 </head>
 <body>
   <fieldset aria-label="Настройки кнопки" id="settings" disabled>
-    <label class="field">
+    <label class="field" id="theme-field">
       <span>Тема</span>
       <select id="theme">
         <option value="bars">Пиксельные столбики</option>
         <option value="lines">Тонкие линии</option>
         <option value="large">Цифры крупнее</option>
+        <option value="amber">Янтарный терминал</option>
+        <option value="ice">Ледяной контур</option>
       </select>
     </label>
     <label class="field" id="digit-size-field">
-      <span>Размер цифр</span>
+      <span id="digit-size-label">Размер цифр</span>
       <select id="digit-size">
         <option value="">Авто по теме</option>
       </select>
@@ -100,11 +102,24 @@
       </label>
       <p id="ip-note">Для внешнего IP кнопка обращается к api.ipify.org.</p>
     </div>
-    <label class="field" id="fps-process-field" hidden>
-      <span>Процесс игры</span>
-      <input type="text" id="fps-process" maxlength="80" spellcheck="false" autocomplete="off" placeholder="korabli.exe" aria-describedby="fps-process-hint">
-      <small id="fps-process-hint">Для игр Steam и других лаунчеров возьми имя .exe самой игры из вкладки «Подробности» диспетчера задач.</small>
-    </label>
+    <div class="fps-settings" id="fps-settings" hidden>
+      <label class="field">
+        <span>Режим FPS</span>
+        <select id="fps-mode">
+          <option value="auto">Активная игра</option>
+          <option value="manual">Указанный процесс</option>
+        </select>
+      </label>
+      <div class="field" id="fps-process-field" hidden>
+        <label for="fps-process">Процесс игры</label>
+        <input type="text" id="fps-process" list="fps-apps" maxlength="1024" spellcheck="false" autocomplete="off" placeholder="game.exe" aria-describedby="fps-process-hint">
+        <datalist id="fps-apps"></datalist>
+        <small id="fps-process-hint">Укажи имя или путь к файлу .exe игры. Подсказки показывают открытые приложения.</small>
+        <p role="status" id="fps-apps-status" hidden></p>
+        <button id="refresh-fps-apps" type="button">Обновить приложения</button>
+      </div>
+      <small>Если кнопка показывает «Доступ к FPS», добавь свою учётную запись в группу Windows «Пользователи журналов производительности», затем выйди из системы и войди снова.</small>
+    </div>
     <label class="field" id="ping-target-field" hidden>
       <span>Адрес для пинга</span>
       <input type="text" id="ping-target" maxlength="253" spellcheck="false" autocomplete="off" placeholder="1.1.1.1">
@@ -113,7 +128,7 @@
       <span>Буква тома в Windows</span>
       <select id="volume-letter"></select>
     </label>
-    <div id="audio-settings" class="audio-settings" hidden>
+    <div id="audio-settings" class="device-settings" hidden>
       <label class="field">
         <span>Первый аудиовыход</span>
         <select id="audio-output-a" aria-describedby="audio-status" disabled></select>
@@ -122,9 +137,26 @@
         <span>Второй аудиовыход</span>
         <select id="audio-output-b" aria-describedby="audio-status" disabled></select>
       </label>
+      <label class="check">
+        <input type="checkbox" id="audio-show-volume">
+        <span>Показывать громкость</span>
+      </label>
       <p role="status" id="audio-status"></p>
       <button id="refresh-audio-outputs" type="button">Обновить список</button>
     </div>
+    <div id="camera-settings" class="device-settings" hidden>
+      <label class="field">
+        <span>Камера</span>
+        <select id="camera-device" aria-describedby="camera-status" disabled></select>
+      </label>
+      <p role="status" id="camera-status"></p>
+      <button id="refresh-cameras" type="button">Обновить список</button>
+    </div>
+    <label class="field" id="bitwarden-path-field" hidden>
+      <span>Путь к Bitwarden.exe</span>
+      <input type="text" id="bitwarden-path" maxlength="1024" spellcheck="false" autocomplete="off" placeholder="C:\Program Files\Bitwarden\Bitwarden.exe" aria-describedby="bitwarden-path-hint">
+      <small id="bitwarden-path-hint">Оставь поле пустым для автоматического поиска Bitwarden.</small>
+    </label>
   </fieldset>
   <p role="status" id="connection" hidden>Нет связи со Stream Dock. Открой настройки кнопки заново.</p>
   <script src="../settings.js"></script>

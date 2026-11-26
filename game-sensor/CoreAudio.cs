@@ -29,6 +29,24 @@ internal interface IMMDevice
     [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
 }
 
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioEndpointVolume
+{
+    [PreserveSig] int RegisterControlChangeNotify(IntPtr callback);
+    [PreserveSig] int UnregisterControlChangeNotify(IntPtr callback);
+    [PreserveSig] int GetChannelCount(out uint count);
+    [PreserveSig] int SetMasterVolumeLevel(float level, IntPtr context);
+    [PreserveSig] int SetMasterVolumeLevelScalar(float level, IntPtr context);
+    [PreserveSig] int GetMasterVolumeLevel(out float level);
+    [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+    [PreserveSig] int SetChannelVolumeLevel(uint channel, float level, IntPtr context);
+    [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, IntPtr context);
+    [PreserveSig] int GetChannelVolumeLevel(uint channel, out float level);
+    [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, IntPtr context);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
 [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 internal interface IPropertyStore
 {

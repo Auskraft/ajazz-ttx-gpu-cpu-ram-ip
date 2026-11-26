@@ -10,7 +10,8 @@ const FONT = "Segoe UI,Arial,sans-serif";
 const MONO = "Consolas,monospace";
 const CATEGORIES = {
   cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa",
-  fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879", audio: "#87e2d5"
+  fps: "#65efbb", mic: "#ffc473", network: "#78c7ff", ssd: "#b299ff", hdd: "#e8c879", audio: "#87e2d5",
+  camera: "#aebaff"
 };
 const SIGNAL = { green: "#79ef87", amber: "#ffcd69", red: "#ff6777" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
@@ -19,7 +20,9 @@ let bitwardenMark;
 const THEMES = {
   bars: { start: "#080a0e", end: "#12151b", primary: "#f4f7fc", secondary: "#c3cad6", grid: "#3f444c" },
   lines: { start: "#071318", end: "#0c2028", primary: "#f4fafc", secondary: "#b4cacf", grid: "#365059" },
-  large: { start: "#080a0e", end: "#12151b", primary: "#ffffff", secondary: "#d0d6e0", grid: "#3f444c" }
+  large: { start: "#080a0e", end: "#12151b", primary: "#ffffff", secondary: "#d0d6e0", grid: "#3f444c" },
+  amber: { start: "#201509", end: "#39260e", primary: "#fff1ce", secondary: "#e8c990", grid: "#765326", outline: "#936b34" },
+  ice: { start: "#081929", end: "#142d47", primary: "#eef9ff", secondary: "#bdd8ef", grid: "#436580", outline: "#4578a5" }
 };
 const METRICS = {
   cpuTemperature: { label: "CPU °C", group: "cpu", unit: "°C", limits: [60, 75, 90] },
@@ -58,12 +61,18 @@ function widthEm(value, font) {
     if (character === "%") return width + 0.94;
     if (character === "—") return width + 1;
     if ("/.,° ".includes(character)) return width + 0.35;
+    if ("ЖМФЫШЩЮ".includes(character)) return width + 0.96;
+    if ("КЛНО".includes(character)) return width + 0.76;
     return width + 0.64;
   }, 0);
 }
 
 function fittingSize(value, font, preferred, width) {
   return Math.max(1, Math.min(preferred, Math.floor(width / widthEm(value, font))));
+}
+
+function numberFont(theme) {
+  return theme === "bars" || theme === "amber" ? MONO : FONT;
 }
 
 function trafficColor(value, [low, medium, high]) {
@@ -108,7 +117,8 @@ function drawGraph(metric, history, { theme, totalMemory, traffic, top }) {
     const y = bottom - (bottom - top) * normalize(metric, value, totalMemory);
     return [x.toFixed(2), y.toFixed(2)];
   });
-  const coords = points.map((pair) => pair.join(",")).join(" ");
+  const coords = points.flatMap(([x, y], i) => theme === "amber" && i > 0
+    ? [x + "," + points[i - 1][1], x + "," + y] : [x + "," + y]).join(" ");
   const firstX = points[0][0];
   const [lastX, lastY] = points.at(-1);
   const stops = traffic && metric.limits && points.length > 1
@@ -116,11 +126,12 @@ function drawGraph(metric, history, { theme, totalMemory, traffic, top }) {
     : "";
   const gradient = stops ? `<defs><linearGradient id="history" x1="0" x2="1" y1="0" y2="0">${stops}</linearGradient></defs>` : "";
   const lineColor = stops ? "url(#history)" : colorFor(values.at(-1));
-  const area = theme === "lines" && points.length > 1
-    ? `<polygon points="${coords} ${lastX},${bottom + 1} ${firstX},${bottom + 1}" fill="${lineColor}" opacity=".22"/>`
+  const filled = theme === "lines" || theme === "ice";
+  const area = filled && points.length > 1
+    ? `<polygon points="${coords} ${lastX},${bottom + 1} ${firstX},${bottom + 1}" fill="${lineColor}" opacity="${theme === "ice" ? ".34" : ".22"}"/>`
     : "";
-  const line = `<polyline points="${coords}" fill="none" stroke="${lineColor}" stroke-width="${theme === "lines" ? 1.35 : 1}" stroke-linejoin="round"/>`;
-  const dot = theme === "lines" || points.length === 1
+  const line = `<polyline points="${coords}" fill="none" stroke="${lineColor}" stroke-width="${filled ? 1.35 : 1}" stroke-linejoin="round"/>`;
+  const dot = filled || points.length === 1
     ? `<circle cx="${lastX}" cy="${lastY}" r="1.4" fill="${colorFor(values.at(-1))}"/>`
     : "";
   return baseline + gradient + area + line + dot;
@@ -221,12 +232,12 @@ function drawReading(metric, value, history, settings, snapshot, focus) {
   const totalMemory = Number.isFinite(snapshot.ramTotalGb) && snapshot.ramTotalGb > 0 ? snapshot.ramTotalGb : null;
   const hasValue = Number.isFinite(value);
   const reading = hasValue ? (memory ? value.toFixed(1).replace(".", ",") : Math.round(value)) : "—";
-  const font = theme === "bars" ? MONO : FONT;
+  const font = numberFont(theme);
   if (focus) return drawLargeValue(reading, hasValue ? (memory ? "ГБ" : metric.unit) : "", palette, font);
   const suffix = hasValue ? (memory ? (totalMemory ? "/" + Math.round(totalMemory) : "") : metric.unit) : "";
   const label = text(metric.label, 6, 13, { size: 9, fill: color });
   const defaultSize = memory && String(reading).length > 4 ? 17 :
-    (memory && theme === "bars" ? 19 : (large && !memory ? 26 : 22));
+    (memory && font === MONO ? 19 : (large && !memory ? 26 : 22));
   const unitWidth = suffix ? widthEm(suffix, FONT) * 8 + 2 : 0;
   const preferred = settings.digitSize ?? defaultSize;
   const inlineSize = fittingSize(reading, font, preferred, 53.5 - unitWidth);
@@ -245,12 +256,12 @@ function drawReading(metric, value, history, settings, snapshot, focus) {
 
 function gameHeader(label, color, theme, marker = color) {
   return text(label, 6, 12, { size: 8.4, fill: color }) +
-    (theme === "bars" ? rect(54, 7, 3, 3, marker) : "");
+    (theme === "bars" && marker ? rect(54, 7, 3, 3, marker) : "");
 }
 
 function gameValue(value, unit, theme, settings, { baseline, preferred, color }) {
   const palette = THEMES[theme];
-  const font = theme === "bars" ? MONO : FONT;
+  const font = numberFont(theme);
   const room = unit ? 51 - widthEm(unit, FONT) * 7.5 : 53;
   const heightLimit = Math.floor((baseline - 14) / 0.73);
   const size = fittingSize(value, font, Math.min(settings.digitSize ?? preferred, heightLimit), room);
@@ -273,11 +284,12 @@ function drawFps(value, history, settings, focus, status) {
   const { theme } = settings;
   const palette = THEMES[theme];
   const fps = Number.isFinite(value?.fps) ? Math.round(value.fps) : "—";
-  if (focus) return drawLargeValue(fps, fps === "—" ? "" : "FPS", palette, theme === "bars" ? MONO : FONT);
+  if (focus) return drawLargeValue(fps, fps === "—" ? "" : "FPS", palette, numberFont(theme));
   const header = gameHeader("FPS", CATEGORIES.fps, theme);
   const amount = gameValue(fps, "", theme, settings, { baseline: theme === "large" ? 36 : 33, preferred: theme === "large" ? 28 : 24 });
   const frame = Number.isFinite(value?.frameMs) ? decimal(value.frameMs) + " мс" : "";
-  const note = frame || (status === "permission" ? "Доступ к FPS" : "Ожидание игры");
+  const note = frame || (status === "permission" ? "Доступ к FPS" :
+    settings.fpsProcess === "auto" ? "Нет кадров" : "Ожидание игры");
   const detail = text(note, 6, 44, { size: 7.6, fill: status === "permission" ? SIGNAL.amber : palette.secondary });
   const samples = history.map((sample) => Number.isFinite(sample) ? sample : sample?.frameMs);
   return header + amount + detail + gameGraph("fps", samples, theme, 47, 24);
@@ -289,17 +301,26 @@ function meterColor(level) {
   return SIGNAL.green;
 }
 
-function drawMicrophone(value, settings) {
+function deviceHeader(label, color, enabled, animationPhase) {
+  const phase = Number.isFinite(animationPhase) ? animationPhase : 0;
+  const opacity = (0.7 + 0.3 * Math.cos(phase * 2 * Math.PI / 16)).toFixed(2);
+  const marker = enabled
+    ? `<circle cx="57" cy="8.8" r="3.8" fill="${SIGNAL.red}" opacity="${(Number(opacity) * 0.23).toFixed(2)}"/><circle cx="57" cy="8.8" r="2.3" fill="${SIGNAL.red}" opacity="${opacity}"/>`
+    : "";
+  return text(label, 6, 12, { size: fittingSize(label, FONT, 8.1, 45), fill: color }) + marker;
+}
+
+function drawMicrophone(value, settings, animationPhase) {
   const { theme } = settings;
   const palette = THEMES[theme];
   const muted = value?.muted === true;
   const db = Number.isFinite(value?.db) ? clamp(value.db, -60, 0) : null;
   const signal = !muted && db !== null;
   const color = muted ? SIGNAL.red : CATEGORIES.mic;
-  const header = gameHeader("МИКРОФОН", color, theme, muted || signal ? color : palette.grid);
+  const header = deviceHeader("МИКРОФОН", color, value?.muted === false, animationPhase);
   const level = muted ? "ВЫКЛ" : value ? (db === null ? "−∞" : String(Math.round(db)).replace("-", "−")) : "—";
-  const readout = gameValue(level, muted ? "" : "dBFS", theme, settings, {
-    baseline: 34, preferred: muted ? 17 : theme === "large" ? 24 : 20, color: muted ? SIGNAL.red : palette.primary
+  const readout = gameValue(level, "", theme, settings, {
+    baseline: 37, preferred: muted ? 17 : theme === "large" ? 28 : 24, color: muted ? SIGNAL.red : palette.primary
   });
   const count = theme === "lines" ? 26 : 13;
   const stride = 52 / count;
@@ -309,9 +330,10 @@ function drawMicrophone(value, settings) {
     return rect(6 + stride * index, 41, theme === "lines" ? stride : stride - 1, height,
       signal && db >= threshold ? meterColor(threshold) : palette.grid);
   }).join("");
-  const ticks = text("−60", 6, 59, { font: MONO, size: 6.6, fill: palette.secondary }) +
-    text("−30", CENTER, 59, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "middle" }) +
-    text("0", 58, 59, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "end" });
+  const ticks = text("−60", 6, 55, { font: MONO, size: 6.6, fill: palette.secondary }) +
+    text("−30", CENTER, 55, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "middle" }) +
+    text("0", 58, 55, { font: MONO, size: 6.6, fill: palette.secondary, anchor: "end" }) +
+    text("dBFS", 58, 61, { size: 5.7, fill: palette.secondary, anchor: "end" });
   return header + readout + meter + ticks;
 }
 
@@ -326,7 +348,7 @@ function drawNetwork(value, settings, focus) {
   const ping = Number.isFinite(value?.pingMs) ? Math.round(value.pingMs) : "—";
   const loss = Number.isFinite(value?.lossPct) ? Math.round(value.lossPct) : null;
   const jitter = Number.isFinite(value?.jitterMs) ? Math.round(value.jitterMs) : null;
-  if (focus) return drawLargeValue(ping, ping === "—" ? "" : "мс", palette, theme === "bars" ? MONO : FONT);
+  if (focus) return drawLargeValue(ping, ping === "—" ? "" : "мс", palette, numberFont(theme));
   const accent = loss > 0 || (ping !== "—" && ping > 75) ? SIGNAL.amber : CATEGORIES.network;
   const header = gameHeader("СЕТЬ", CATEGORIES.network, theme, accent);
   const number = gameValue(ping, "мс", theme, settings, { baseline: 30, preferred: 20, color: accent });
@@ -343,7 +365,7 @@ function drawDisk(value, settings, focus) {
   const type = value?.type || "ДИСК";
   const color = type === "SSD" ? CATEGORIES.ssd : CATEGORIES.hdd;
   const free = Number.isFinite(value?.freePct) ? Math.round(clamp(value.freePct, 0, 100)) : "—";
-  if (focus) return drawLargeValue(free, free === "—" ? "" : "%", palette, theme === "bars" ? MONO : FONT);
+  if (focus) return drawLargeValue(free, free === "—" ? "" : "%", palette, numberFont(theme));
   const tone = free === "—" ? palette.primary : free <= 10 ? SIGNAL.red : free <= 25 ? SIGNAL.amber : palette.primary;
   const header = gameHeader(type + "  " + letter + ":", color, theme);
   const number = gameValue(free, "%", theme, settings, { baseline: 33, preferred: theme === "large" ? 28 : 24, color: tone });
@@ -359,7 +381,11 @@ function drawAudioOutput(value, settings, status) {
   const { theme } = settings;
   const palette = THEMES[theme];
   const accent = CATEGORIES.audio;
-  const header = gameHeader("АУДИО", accent, theme, value?.slot ? accent : palette.grid);
+  const volume = settings.audioShowVolume && Number.isFinite(value?.volumePercent)
+    ? Math.round(clamp(value.volumePercent, 0, 100)) + "%" : null;
+  const marker = volume ? null : value?.slot ? accent : palette.grid;
+  const header = gameHeader("АУДИО", accent, theme, marker) +
+    (volume ? text(volume, 58, 12, { font: MONO, size: 7.6, fill: palette.primary, anchor: "end" }) : "");
   if (!value?.configured) {
     const hint = status === "unavailable" ? ["Нет", "выходов"] : ["Выбери", "2 выхода"];
     return header + text(hint[0], 6, 32, { size: 11, fill: palette.primary }) +
@@ -368,7 +394,7 @@ function drawAudioOutput(value, settings, status) {
 
   const name = value.name?.split(" (")[0].trim() || "—";
   const preferred = theme === "large" ? 15 : 13;
-  const font = theme === "bars" ? MONO : FONT;
+  const font = numberFont(theme);
   const words = name.split(/\s+/);
   const lines = words.length > 1 && fittingSize(name, font, preferred, 52) < 9
     ? [words[0], words.slice(1).join(" ")] : [name];
@@ -386,6 +412,27 @@ function drawAudioOutput(value, settings, status) {
   return header + readout + slots;
 }
 
+function drawCamera(value, settings, animationPhase) {
+  const { theme } = settings;
+  const palette = THEMES[theme];
+  const enabled = value?.enabled === true;
+  const disabled = value?.enabled === false;
+  const switching = value?.switching === true;
+  const header = deviceHeader("КАМЕРА", CATEGORIES.camera, enabled && !switching, animationPhase);
+  const reading = switching ? "…" : enabled ? "ВКЛ" : disabled ? "ВЫКЛ" : "—";
+  const displayName = (value?.name || "").split(/\s+/).slice(0, 2).join(" ").slice(0, 22);
+  const detail = switching ? "Запрос Windows" : value?.selectionRequired ? "Выбери камеру" :
+    (!enabled && !disabled ? "Недоступна" : displayName);
+  const color = disabled ? palette.secondary : palette.primary;
+  const readout = gameValue(reading, "", theme, settings, {
+    baseline: 37, preferred: theme === "large" ? 28 : 23, color
+  });
+  const subtitle = text(detail, 6, 54, {
+    size: fittingSize(detail, FONT, 8.6, 52), fill: switching ? SIGNAL.amber : palette.secondary
+  });
+  return header + readout + subtitle;
+}
+
 function drawBitwarden() {
   if (bitwardenMark === undefined) {
     bitwardenMark = readFileSync(join(__dirname, "images", "bitwarden-mark.png")).toString("base64");
@@ -395,21 +442,23 @@ function drawBitwarden() {
   return `<image x="${inset}" y="${inset}" width="${size}" height="${size}" xlink:href="data:image/png;base64,${bitwardenMark}"/>`;
 }
 
-function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false, status }) {
+function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false, status, animationPhase }) {
   const theme = metric !== "bitwarden" && Object.hasOwn(THEMES, settings.theme) ? settings.theme : "bars";
   const preferences = { ...settings, theme };
   const palette = THEMES[theme];
   const definition = Object.hasOwn(METRICS, metric) ? METRICS[metric] : null;
   const flag = metric === "ip" && showFlag && !focus && settings.ipMode !== "local" ? getFlag(country) : null;
-  const background = `<defs><linearGradient id="face" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${palette.start}"/><stop offset="1" stop-color="${palette.end}"/></linearGradient></defs><rect width="64" height="64" rx="3" fill="url(#face)"/>`;
+  const outline = palette.outline ? `<rect x="1" y="1" width="62" height="62" rx="3" fill="none" stroke="${palette.outline}" stroke-width=".8"/>` : "";
+  const background = `<defs><linearGradient id="face" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${palette.start}"/><stop offset="1" stop-color="${palette.end}"/></linearGradient></defs><rect width="64" height="64" rx="3" fill="url(#face)"/>` + outline;
   let content = "";
   if (flag) content = drawFlag(flag, preferences.ipProgress === true) + drawIpProgress(preferences, palette, focus, ipSecondsRemaining);
   else if (metric === "ip") content = drawIp(value, preferences, palette, focus, ipSecondsRemaining);
   else if (metric === "fps") content = drawFps(value, history, preferences, focus, status);
-  else if (metric === "microphone") content = drawMicrophone(value, preferences);
+  else if (metric === "microphone") content = drawMicrophone(value, preferences, animationPhase);
   else if (metric === "network") content = drawNetwork(value, preferences, focus);
   else if (metric === "disk") content = drawDisk(value, preferences, focus);
   else if (metric === "audioOutput") content = drawAudioOutput(value, preferences, status);
+  else if (metric === "camera") content = drawCamera(value, preferences, animationPhase);
   else if (metric === "bitwarden") content = drawBitwarden();
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
   const xlink = flag || metric === "bitwarden" ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";

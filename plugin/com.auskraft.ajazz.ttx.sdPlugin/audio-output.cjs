@@ -72,7 +72,9 @@ function createAudioOutput() {
       if (!Array.isArray(reading?.devices)) throw new Error('Windows audio devices are unavailable');
       const devices = reading.devices.filter((device) =>
         normalizeAudioOutputId(device?.id) && typeof device.name === 'string' && device.name.trim());
-      return { devices, activeId: normalizeAudioOutputId(reading.activeId) || null };
+      const volumePercent = Number.isFinite(reading.volumePercent) && reading.volumePercent >= 0 && reading.volumePercent <= 100
+        ? reading.volumePercent : null;
+      return { devices, activeId: normalizeAudioOutputId(reading.activeId) || null, volumePercent };
     },
     async setDefault(id) {
       const endpoint = normalizeAudioOutputId(id);
