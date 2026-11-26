@@ -19,13 +19,13 @@ const example = {
   ip: ["203.0.113.42", []]
 };
 
-function tile(metric, theme, focus = false) {
+function tile(metric, theme, focus = false, extra = {}) {
   const [exampleValue, history] = example[metric];
   const value = focus && metric === "cpuLoad" ? 18 : exampleValue;
   const key = focus ? "focus-" + metric : theme + "-" + metric;
   return renderSvg({
     metric, value, history, focus, settings: { theme, traffic: true, ipSeconds: 15 },
-    snapshot: { ramTotalGb: 32 }
+    snapshot: { ramTotalGb: 32 }, ...extra
   }).replaceAll('id="face"', `id="face-${key}"`)
     .replaceAll("#face)", `#face-${key})`)
     .replaceAll('id="history"', `id="history-${key}"`)
@@ -80,4 +80,22 @@ fs.writeFileSync(path.join(target, "focus.html"), html(`
   h1{margin:0;font-size:21px;font-weight:650;letter-spacing:-.025em}header span{font-size:12px;color:#a9b6c9}
   .device{display:grid;grid-template-columns:repeat(3,112px);justify-content:start;gap:8px;width:fit-content;padding:9px;border:1px solid #424b5b;border-radius:13px;background:#252d39;box-shadow:0 7px 14px #03070c66}
   svg{width:100%;height:auto;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
+`));
+
+fs.writeFileSync(path.join(target, "ip-display.html"), html(`
+  <main>
+    <header><h1>Внешний IP и флаг</h1><span>Демонстрационные данные</span></header>
+    <div class="sequence">
+      <div class="device">${tile("ip", "bars")}</div>
+      <span class="interval">5 или 15 с</span>
+      <div class="device">${tile("ip", "large", false, { showFlag: true, country: "DE", settings: { theme: "bars", ipMode: "public", ipDisplay: "alternate" } })}</div>
+    </div>
+  </main>`, `
+  *{box-sizing:border-box}html,body{margin:0;background:#10151d;color:#f0f4fb;font-family:"Segoe UI",sans-serif}
+  main{padding:25px 27px;width:460px}header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px}
+  h1{margin:0;font-size:21px;font-weight:650;letter-spacing:-.025em}header span{font-size:12px;color:#a9b6c9}
+  .sequence{display:flex;align-items:center;gap:14px}
+  .device{padding:8px;border:1px solid #424b5b;border-radius:12px;background:#252d39;box-shadow:0 7px 14px #03070c66}
+  .interval{font-size:12px;font-weight:600;color:#a9b6c9}
+  svg{width:102px;height:102px;display:block;border-radius:6px;box-shadow:0 1px 3px #000}
 `));

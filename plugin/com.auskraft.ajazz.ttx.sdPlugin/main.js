@@ -1,8 +1,8 @@
 'use strict';
 
 const { networkInterfaces } = require('node:os');
-const { isIPv4 } = require('node:net');
 const WebSocket = require('./vendor/ws');
+const { createPublicIpLookups } = require('./public-ip.js');
 const { renderTile } = require('./render.js');
 const { createTelemetry } = require('./telemetry.cjs');
 const { metricIds, metricForAction, normalize } = require('./settings.js');
@@ -10,7 +10,14 @@ const { metricIds, metricForAction, normalize } = require('./settings.js');
 const numericMetrics = [...metricIds.filter((metric) => metric !== 'ip'), 'gpuHotspot'];
 const historyLength = 30;
 const tickInterval = 1000;
-const minIpCache = 4500;
+
+function isPublicIp({ metric, settings }) {
+  return metric === 'ip' && settings.ipMode === 'public';
+}
+
+function wantsCountry(entry) {
+  return isPublicIp(entry) && entry.settings.ipDisplay === 'alternate';
+}
 
 function localIp() {
   const entries = Object.entries(networkInterfaces());
@@ -24,43 +31,33 @@ function localIp() {
 function startPlugin({ port, uuid, registerEvent }) {
   const socket = new WebSocket('ws://127.0.0.1:' + port, { maxPayload: 256 * 1024 });
   const onscreen = new Map();
+  const publicIp = createPublicIpLookups();
   const histories = Object.fromEntries(numericMetrics.map((name) => [name, []]));
   let telemetry = null;
   let snapshot = {};
   let timer = null;
-  let publicRequest = null;
-  let publicController = null;
-  let publicCheckedAt = -Infinity;
-  let publicValue = null;
 
   function send(event, context, payload) {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ event, context, payload }));
   }
 
-  function readPublicIp(now) {
-    if (publicRequest) return publicRequest;
-    if (now - publicCheckedAt < minIpCache) return Promise.resolve(publicValue);
+  async function resolveAddress(entry, request, withCountry) {
+    const isCurrent = () => onscreen.get(entry.context) === entry && entry.gettingIp === request;
+    let result = await request;
+    if (!isCurrent()) return;
+    if (!result && withCountry) {
+      result = await publicIp.address.read(Date.now());
+      if (!isCurrent()) return;
+    }
 
-    publicCheckedAt = now;
-    const controller = new AbortController();
-    publicController = controller;
-    const timeout = setTimeout(() => controller.abort(), 3500);
-    publicRequest = fetch('https://api.ipify.org', {
-      signal: controller.signal,
-      redirect: 'error'
-    }).then(async (response) => {
-      if (!response.ok) return null;
-      const address = (await response.text()).trim();
-      return isIPv4(address) ? address : null;
-    }).catch(() => null).then((address) => {
-      publicValue = address;
-      return address;
-    }).finally(() => {
-      clearTimeout(timeout);
-      publicRequest = null;
-      publicController = null;
-    });
-    return publicRequest;
+    const country = result?.country ?? null;
+    entry.showFlag = Boolean(country && entry.ipCountry && !entry.showFlag);
+    entry.ipCountry = country;
+    entry.gettingIp = null;
+    entry.ipValue = result?.address ?? null;
+    entry.ipStatus = result?.address ? 'ready' : 'unavailable';
+    if (withCountry) entry.ipNextCheck = Date.now() + entry.settings.ipSeconds * 1000;
+    paint(entry);
   }
 
   function refreshAddress(entry, now) {
@@ -73,15 +70,10 @@ function startPlugin({ port, uuid, registerEvent }) {
       return;
     }
 
-    const request = readPublicIp(now);
+    const withCountry = wantsCountry(entry);
+    const request = (withCountry ? publicIp.location : publicIp.address).read(now);
     entry.gettingIp = request;
-    request.then((address) => {
-      if (onscreen.get(entry.context) !== entry || entry.gettingIp !== request) return;
-      entry.gettingIp = null;
-      entry.ipValue = address;
-      entry.ipStatus = address ? 'ready' : 'unavailable';
-      paint(entry);
-    });
+    void resolveAddress(entry, request, withCountry);
   }
 
   function paint(entry, now = Date.now()) {
@@ -97,6 +89,8 @@ function startPlugin({ port, uuid, registerEvent }) {
       value,
       settings,
       focus,
+      country: entry.ipCountry,
+      showFlag: Boolean(!focus && entry.showFlag),
       snapshot,
       ipSecondsRemaining: Math.min(settings.ipSeconds, Math.max(0, (entry.ipNextCheck - now) / 1000)),
       status
@@ -143,9 +137,8 @@ function startPlugin({ port, uuid, registerEvent }) {
       telemetry.setGpuHotspotEnabled(needsHotspot);
       if (!needsHotspot) histories.gpuHotspot.length = 0;
     }
-    if (!actions.some(({ metric, settings }) => metric === 'ip' && settings.ipMode === 'public')) {
-      publicController?.abort();
-    }
+    if (!actions.some(isPublicIp)) publicIp.address.cancel();
+    if (!actions.some(wantsCountry)) publicIp.location.cancel();
     if (actions.length && !timer) timer = setInterval(update, tickInterval);
     else if (!actions.length && timer) {
       clearInterval(timer);
@@ -176,7 +169,7 @@ function startPlugin({ port, uuid, registerEvent }) {
       onscreen.set(context, {
         context, device, metric, settings: normalize(payload?.settings),
         focus: onscreen.get(context)?.focus ?? false,
-        ipNextCheck: 0, gettingIp: null, ipValue: null, ipStatus: 'loading',
+        ipNextCheck: 0, gettingIp: null, ipValue: null, ipCountry: null, showFlag: false, ipStatus: 'loading',
         lastImage: null
       });
       syncCollectors();
@@ -193,10 +186,14 @@ function startPlugin({ port, uuid, registerEvent }) {
       const entry = onscreen.get(context);
       if (!entry) return;
       const settings = normalize(payload?.settings);
-      if (entry.settings.ipMode !== settings.ipMode) {
+      const ipModeChanged = entry.metric === 'ip' && entry.settings.ipMode !== settings.ipMode;
+      const ipDisplayChanged = entry.metric === 'ip' && entry.settings.ipDisplay !== settings.ipDisplay;
+      if (ipModeChanged || ipDisplayChanged) {
         entry.gettingIp = null;
-        entry.ipValue = null;
-        entry.ipStatus = 'loading';
+        if (ipModeChanged) entry.ipValue = null;
+        entry.ipCountry = null;
+        entry.showFlag = false;
+        entry.ipStatus = entry.ipValue ? 'ready' : 'loading';
         entry.ipNextCheck = 0;
       } else if (entry.settings.ipSeconds !== settings.ipSeconds) {
         entry.ipNextCheck = Date.now() + settings.ipSeconds * 1000;

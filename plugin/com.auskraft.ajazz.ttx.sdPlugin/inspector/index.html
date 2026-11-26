@@ -65,8 +65,15 @@
       <label class="field">
         <span>IP-адрес</span>
         <select id="ip-mode">
-          <option value="public">Внешний IPv4</option>
+          <option value="public">Внешний IP</option>
           <option value="local">Локальный IPv4</option>
+        </select>
+      </label>
+      <label class="field" id="ip-display-field" hidden>
+        <span>Отображение IP</span>
+        <select id="ip-display" aria-describedby="ip-note">
+          <option value="digits">Только цифры</option>
+          <option value="alternate">Цифры и флаг по очереди</option>
         </select>
       </label>
       <label class="field">

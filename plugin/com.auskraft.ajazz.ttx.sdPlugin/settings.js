@@ -28,6 +28,7 @@
       traffic: source.traffic !== false,
       gpuSensor: source.gpuSensor === 'hotspot' ? 'hotspot' : 'core',
       ipMode: source.ipMode === 'local' ? 'local' : 'public',
+      ipDisplay: source.ipDisplay === 'alternate' ? 'alternate' : 'digits',
       ipSeconds: Number(source.ipSeconds) === 5 ? 5 : 15,
       ipProgress: source.ipProgress === true,
       digitSize: Number.isFinite(digitSize)

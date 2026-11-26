@@ -1,5 +1,8 @@
 "use strict";
 
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
+
 const SIZE = 64;
 const GRAPH = { left: 6, right: 58, bottom: 57 };
 const CENTER = SIZE / 2;
@@ -7,6 +10,7 @@ const FONT = "Segoe UI,Arial,sans-serif";
 const MONO = "Consolas,monospace";
 const CATEGORIES = { cpu: "#ff777f", gpu: "#8aef66", ram: "#79baff", ip: "#7bcafa" };
 const TRAFFIC = [[101, 241, 124], [255, 222, 87], [255, 83, 99]];
+const flags = new Map();
 const THEMES = {
   bars: { start: "#080a0e", end: "#12151b", primary: "#f4f7fc", secondary: "#c3cad6", grid: "#3f444c" },
   lines: { start: "#071318", end: "#0c2028", primary: "#f4fafc", secondary: "#b4cacf", grid: "#365059" },
@@ -124,6 +128,40 @@ function fitAddress(rows, preferred, width, height) {
   return { rows, size };
 }
 
+function getFlag(country) {
+  if (typeof country !== "string" || !/^[a-z]{2}$/i.test(country)) return null;
+  const code = country.toLowerCase();
+  if (flags.has(code)) return flags.get(code);
+  let flag = null;
+  try {
+    const image = readFileSync(join(__dirname, "flags", code + ".png"));
+    const width = image.readUInt32BE(16);
+    const height = image.readUInt32BE(20);
+    if (width && height) flag = { width, height, data: image.toString("base64") };
+  } catch {
+    // An unavailable flag leaves the address visible.
+  }
+  flags.set(code, flag);
+  return flag;
+}
+
+function drawIpProgress(settings, palette, focus, ipSecondsRemaining) {
+  if (focus || settings.ipProgress !== true) return "";
+  const interval = settings.ipSeconds === 5 ? 5 : 15;
+  const remaining = Number.isFinite(ipSecondsRemaining) ? clamp(ipSecondsRemaining, 0, interval) : 0;
+  const track = rect(6, 54, 52, 3, palette.grid);
+  return track + rect(6, 54, (52 * remaining / interval).toFixed(2), 3, CATEGORIES.ip);
+}
+
+function drawFlag(flag, showProgress) {
+  const scale = Math.min(54 / flag.width, 43 / flag.height);
+  const width = flag.width * scale;
+  const height = flag.height * scale;
+  const x = CENTER - width / 2;
+  const y = (showProgress ? 27.5 : CENTER) - height / 2;
+  return `<image x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${width.toFixed(2)}" height="${height.toFixed(2)}" xlink:href="data:image/png;base64,${flag.data}"/>`;
+}
+
 function drawIp(value, settings, palette, focus, ipSecondsRemaining) {
   const isLocal = settings.ipMode === "local";
   const label = isLocal ? "ЛОКАЛЬНЫЙ IP" : METRICS.ip.label;
@@ -148,12 +186,7 @@ function drawIp(value, settings, palette, focus, ipSecondsRemaining) {
   const address = layout.rows.map((part, i) => text(part, CENTER, (firstBaseline + i * rowHeight).toFixed(2), {
     font: MONO, size: layout.size, fill: palette.primary, anchor: "middle"
   })).join("");
-  if (!showProgress) return header + address;
-  const interval = settings.ipSeconds === 5 ? 5 : 15;
-  const remaining = Number.isFinite(ipSecondsRemaining) ? clamp(ipSecondsRemaining, 0, interval) : 0;
-  const track = rect(6, 54, 52, 3, palette.grid);
-  const progress = rect(6, 54, (52 * remaining / interval).toFixed(2), 3, CATEGORIES.ip);
-  return header + address + track + progress;
+  return header + address + drawIpProgress(settings, palette, focus, ipSecondsRemaining);
 }
 
 function drawLargeValue(reading, suffix, palette, font) {
@@ -205,16 +238,19 @@ function drawReading(metric, value, history, settings, snapshot, focus) {
   return label + marker + digits + unit + graph;
 }
 
-function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining }) {
+function renderSvg({ metric, history = [], value, settings = {}, snapshot = {}, focus = false, ipSecondsRemaining, country, showFlag = false }) {
   const theme = Object.hasOwn(THEMES, settings.theme) ? settings.theme : "bars";
   const preferences = { ...settings, theme };
   const palette = THEMES[theme];
   const definition = Object.hasOwn(METRICS, metric) ? METRICS[metric] : null;
+  const flag = metric === "ip" && showFlag && !focus && settings.ipMode !== "local" ? getFlag(country) : null;
   const background = `<defs><linearGradient id="face" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="${palette.start}"/><stop offset="1" stop-color="${palette.end}"/></linearGradient></defs><rect width="64" height="64" rx="3" fill="url(#face)"/>`;
   let content = "";
-  if (metric === "ip") content = drawIp(value, preferences, palette, focus, ipSecondsRemaining);
+  if (flag) content = drawFlag(flag, preferences.ipProgress === true) + drawIpProgress(preferences, palette, focus, ipSecondsRemaining);
+  else if (metric === "ip") content = drawIp(value, preferences, palette, focus, ipSecondsRemaining);
   else if (definition) content = drawReading(definition, value, history, preferences, snapshot, focus);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">${background}${content}</svg>`;
+  const xlink = flag ? ' xmlns:xlink="http://www.w3.org/1999/xlink"' : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg"${xlink} width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">${background}${content}</svg>`;
 }
 
 function renderTile(input) {

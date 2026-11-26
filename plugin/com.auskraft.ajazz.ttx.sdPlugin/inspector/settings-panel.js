@@ -9,6 +9,8 @@ const gpuSensor = document.getElementById('gpu-sensor');
 const gpuSensorField = document.getElementById('gpu-sensor-field');
 const ipSettings = document.getElementById('ip-settings');
 const ipMode = document.getElementById('ip-mode');
+const ipDisplay = document.getElementById('ip-display');
+const ipDisplayField = document.getElementById('ip-display-field');
 const ipSeconds = document.getElementById('ip-seconds');
 const ipProgress = document.getElementById('ip-progress');
 const ipNote = document.getElementById('ip-note');
@@ -22,6 +24,15 @@ for (let size = digitSizeRange.min; size <= digitSizeRange.max; size += 1) {
   digitSize.add(new Option(`${size} px`, String(size)));
 }
 
+function updateIpFields({ ipMode, ipDisplay }) {
+  const external = ipMode === 'public';
+  ipDisplayField.hidden = !external;
+  ipNote.hidden = !external;
+  ipNote.textContent = ipDisplay === 'alternate'
+    ? 'Флаг определяется по внешнему IP через Cloudflare.'
+    : 'Для внешнего IP кнопка обращается к api.ipify.org.';
+}
+
 function populate(incoming) {
   const settings = normalize(incoming);
   theme.value = settings.theme;
@@ -29,12 +40,13 @@ function populate(incoming) {
   traffic.checked = settings.traffic;
   gpuSensor.value = settings.gpuSensor;
   ipMode.value = settings.ipMode;
+  ipDisplay.value = settings.ipDisplay;
   ipSeconds.value = String(settings.ipSeconds);
   ipProgress.checked = settings.ipProgress;
-  ipNote.hidden = settings.ipMode !== 'public';
+  updateIpFields(settings);
 }
 
-for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipSeconds, ipProgress]) {
+for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipDisplay, ipSeconds, ipProgress]) {
   input.addEventListener('change', () => {
     if (socket?.readyState !== WebSocket.OPEN) return;
     const settings = normalize({
@@ -42,11 +54,12 @@ for (const input of [theme, digitSize, traffic, gpuSensor, ipMode, ipSeconds, ip
       traffic: traffic.checked,
       gpuSensor: gpuSensor.value,
       ipMode: ipMode.value,
+      ipDisplay: ipDisplay.value,
       ipSeconds: ipSeconds.value,
       ipProgress: ipProgress.checked,
       digitSize: digitSize.value
     });
-    ipNote.hidden = settings.ipMode !== 'public';
+    updateIpFields(settings);
     socket.send(JSON.stringify({ event: 'setSettings', context: registrationId, payload: settings }));
   });
 }
