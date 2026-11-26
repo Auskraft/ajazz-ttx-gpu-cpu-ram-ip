@@ -1,0 +1,83 @@
+{
+  "UUID": "com.auskraft.ajazz.ttx",
+  "Name": "ТТХ GPU/CPU/RAM/IP",
+  "Category": "ТТХ GPU/CPU/RAM/IP",
+  "CategoryIcon": "images/category.png",
+  "Icon": "images/plugin.png",
+  "Author": "Auskraft",
+  "Description": "Мониторинг CPU, GPU, ОЗУ и IPv4 для AJAZZ Stream Dock.",
+  "Version": "1.0.0",
+  "SDKVersion": 3,
+  "CodePathWin": "main.js",
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
+  "Software": { "MinimumVersion": "3.10.188.226" },
+  "Nodejs": { "Version": "20" },
+  "Actions": [
+    {
+      "UUID": "com.auskraft.ajazz.ttx.cpuTemperature",
+      "Name": "Температура CPU",
+      "Icon": "images/cpuTemperature.png",
+      "Tooltip": "Температура процессора и график за 30 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/cpuTemperature.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
+      "UUID": "com.auskraft.ajazz.ttx.gpuTemperature",
+      "Name": "Температура GPU",
+      "Icon": "images/gpuTemperature.png",
+      "Tooltip": "Температура видеокарты NVIDIA и график за 30 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/gpuTemperature.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
+      "UUID": "com.auskraft.ajazz.ttx.ramUsedGb",
+      "Name": "Оперативная память",
+      "Icon": "images/ramUsedGb.png",
+      "Tooltip": "Использование оперативной памяти и график за 30 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/ramUsedGb.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
+      "UUID": "com.auskraft.ajazz.ttx.cpuLoad",
+      "Name": "Загрузка CPU",
+      "Icon": "images/cpuLoad.png",
+      "Tooltip": "Общая загрузка процессора и график за 30 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/cpuLoad.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
+      "UUID": "com.auskraft.ajazz.ttx.gpuLoad",
+      "Name": "Загрузка GPU",
+      "Icon": "images/gpuLoad.png",
+      "Tooltip": "Загрузка видеокарты NVIDIA и график за 30 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/gpuLoad.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    },
+    {
+      "UUID": "com.auskraft.ajazz.ttx.ip",
+      "Name": "IP-адрес",
+      "Icon": "images/ip.png",
+      "Tooltip": "Внешний или локальный IPv4 с интервалом 5 или 15 секунд.",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "images/ip.png", "ShowTitle": false }],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "inspector/index.html"
+    }
+  ]
+}

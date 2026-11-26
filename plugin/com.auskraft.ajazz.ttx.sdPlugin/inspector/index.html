@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Настройки кнопки</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 13px/1.4 "Segoe UI", Arial, sans-serif;
+      color: #eef0f4;
+      background: #26282d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 12px; }
+    fieldset { display: grid; gap: 12px; border: 0; margin: 0; padding: 0; min-width: 0; }
+    .field { display: grid; gap: 5px; }
+    .ip-settings { display: grid; gap: 10px; }
+    select, input { font: inherit; }
+    select {
+      width: 100%;
+      min-height: 32px;
+      color: #f4f5f7;
+      background: #34373e;
+      border: 1px solid #666a75;
+      padding: 4px 7px;
+      border-radius: 4px;
+    }
+    input { accent-color: #8accff; }
+    :focus-visible { outline: 2px solid #8accff; outline-offset: 2px; }
+    .check { display: flex; align-items: center; gap: 7px; min-height: 24px; }
+    .check input { flex: none; margin: 0; }
+    p { color: #c3c9d3; margin: 0; }
+    [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <fieldset aria-label="Настройки кнопки" id="settings" disabled>
+    <label class="field">
+      <span>Тема</span>
+      <select id="theme">
+        <option value="bars">Пиксельные столбики</option>
+        <option value="lines">Тонкие линии</option>
+        <option value="large">Цифры крупнее</option>
+      </select>
+    </label>
+    <label class="check" id="traffic-section" hidden>
+      <input type="checkbox" id="traffic" checked>
+      <span>Плавный светофор</span>
+    </label>
+    <div id="ip-settings" class="ip-settings" hidden>
+      <label class="field">
+        <span>IP-адрес</span>
+        <select id="ip-mode">
+          <option value="public">Внешний IPv4</option>
+          <option value="local">Локальный IPv4</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Обновлять каждые</span>
+        <select id="ip-seconds">
+          <option value="5">5 секунд</option>
+          <option value="15" selected>15 секунд</option>
+        </select>
+      </label>
+      <p id="ip-note">Для внешнего IP кнопка обращается к api.ipify.org.</p>
+    </div>
+  </fieldset>
+  <p role="status" id="connection" hidden>Нет связи со Stream Dock. Открой настройки кнопки заново.</p>
+  <script src="../settings.js"></script>
+  <script src="settings-panel.js"></script>
+</body>
+</html>

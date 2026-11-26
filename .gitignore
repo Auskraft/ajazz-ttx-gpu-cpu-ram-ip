@@ -1,0 +1,7 @@
+/dist/
+/telemetry/
+/cpu-sensor/dist/
+/cpu-sensor/vendor/
+/cpu-sensor/upstream*.zip
+/*.tgz
+*.log
